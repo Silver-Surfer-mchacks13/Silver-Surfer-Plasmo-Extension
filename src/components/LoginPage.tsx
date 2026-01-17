@@ -1,11 +1,14 @@
 // src/components/LoginPage.tsx
 import { useState } from "react"
+import logo from "data-base64:~assets/final_logo.png"
 
 interface LoginPageProps {
   onLogin: () => Promise<void>
+  isDark: boolean
+  toggleDark: () => void
 }
 
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage({ onLogin, isDark, toggleDark }: LoginPageProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -22,15 +25,25 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   }
 
   return (
-    <div className="flex min-h-screen w-full flex-col items-center justify-center bg-gray-100 p-4 dark:bg-slate-900">
-      <div className="mx-auto w-full max-w-md overflow-hidden rounded-lg border-4 border-ink bg-white shadow-comic-lg dark:bg-slate-800">
+    <div className={`flex min-h-screen w-full flex-col items-center justify-center bg-gray-100 p-4 ${isDark ? "dark" : ""} dark:bg-slate-900`}>
+      <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-lg border-4 border-ink bg-white shadow-comic-lg dark:bg-slate-800">
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleDark}
+          className="absolute top-4 right-4 z-50 flex h-10 w-10 items-center justify-center rounded-lg border-2 border-ink bg-gray-200 text-ink shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-comic-hover dark:bg-slate-700 dark:text-white"
+          aria-label="Toggle dark mode">
+          <span className="material-icons-outlined">brightness_4</span>
+        </button>
+        
         {/* Header */}
         <div className="border-b-4 border-ink bg-gradient-to-r from-blue-500 to-cyan-500 p-6">
           <div className="flex items-center justify-center space-x-3">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-white bg-white/20 shadow-lg">
-              <span className="material-icons-outlined text-4xl text-white drop-shadow-md">
-                surfing
-              </span>
+            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border-2 border-white bg-white shadow-lg">
+              <img
+                src={logo}
+                alt="Silver Surfer"
+                className="h-full w-full object-cover"
+              />
             </div>
             <div className="text-center">
               <h1 className="font-display text-4xl tracking-wide text-white drop-shadow-[2px_2px_0px_rgba(0,0,0,0.3)]">

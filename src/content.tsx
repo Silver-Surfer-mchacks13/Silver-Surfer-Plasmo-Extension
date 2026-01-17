@@ -1,18 +1,91 @@
 import cssText from "data-text:~style.css"
 import type { PlasmoCSConfig } from "plasmo"
-
-import { CountButton } from "~features/count-button"
+import {
+  highlightElement,
+  removeHighlights,
+  removeClutter,
+  restoreClutter,
+  magnifyText,
+  resetMagnification,
+  scrollToView,
+  clickElement,
+  fillFormField,
+  selectDropdown
+} from "~lib/page-actions"
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
 }
 
-// Listen for HTML extraction requests from background script
+// Listen for messages from background script or sidepanel
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "EXTRACT_HTML") {
     const html = document.documentElement.outerHTML
     sendResponse({ html, url: window.location.href })
+    return true
   }
+
+  // Page action handlers
+  if (request.action === "HIGHLIGHT_ELEMENT") {
+    const result = highlightElement(request.selector)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "REMOVE_HIGHLIGHTS") {
+    const result = removeHighlights()
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "REMOVE_CLUTTER") {
+    const result = removeClutter()
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "RESTORE_CLUTTER") {
+    const result = restoreClutter()
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "MAGNIFY_TEXT") {
+    const result = magnifyText(request.selector, request.scaleFactor)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "RESET_MAGNIFICATION") {
+    const result = resetMagnification()
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "SCROLL_TO_VIEW") {
+    const result = scrollToView(request.selector)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "CLICK_ELEMENT") {
+    const result = clickElement(request.selector)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "FILL_FORM_FIELD") {
+    const result = fillFormField(request.selector, request.value)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "SELECT_DROPDOWN") {
+    const result = selectDropdown(request.selector, request.value)
+    sendResponse(result)
+    return true
+  }
+
   return true
 })
 
@@ -46,12 +119,5 @@ export const getStyle = (): HTMLStyleElement => {
   return styleElement
 }
 
-const PlasmoOverlay = () => {
-  return (
-    <div className="plasmo-z-50 plasmo-flex plasmo-fixed plasmo-top-32 plasmo-right-8">
-      <CountButton />
-    </div>
-  )
-}
-
-export default PlasmoOverlay
+// Overlay component removed - no longer needed
+// export default PlasmoOverlay

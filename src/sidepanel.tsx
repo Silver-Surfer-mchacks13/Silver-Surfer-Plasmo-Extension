@@ -4,6 +4,8 @@ import LoginPage from "~components/LoginPage"
 import type { AuthState, AuthUser } from "~lib/auth-service"
 import "./style.css"
 import SettingsTab from "./components/settings_tab"
+import TestTab from "./components/TestTab"
+import logo from "data-base64:~assets/final_logo.svg"
 
 
 export default function SidePanel() {
@@ -15,7 +17,7 @@ export default function SidePanel() {
     accessToken: null
   })
 
-  // Check auth state on mount
+  // Check auth state and theme on mount
   useEffect(() => {
     chrome.runtime.sendMessage({ action: "AUTH_GET_STATE" }, (response) => {
       if (response?.success && response.data) {
@@ -23,7 +25,22 @@ export default function SidePanel() {
       }
       setIsLoading(false)
     })
+    
+    // Load dark mode preference
+    chrome.storage.local.get("darkMode", (res) => {
+      if (res.darkMode !== undefined) {
+        setDark(res.darkMode)
+      }
+    })
   }, [])
+
+  const toggleDark = () => {
+    setDark((prev) => {
+      const newVal = !prev
+      chrome.storage.local.set({ darkMode: newVal })
+      return newVal
+    })
+  }
 
   const handleLogin = async () => {
     return new Promise<void>((resolve, reject) => {
@@ -49,7 +66,7 @@ export default function SidePanel() {
       }
     })
   }
-  const [tab, setTab] = useState<"chat" | "settings">("chat")
+  const [tab, setTab] = useState<"chat" | "settings" | "test">("chat")
 
   const rootClass = useMemo(
     () =>
@@ -80,7 +97,7 @@ export default function SidePanel() {
 
   // Show login page if not authenticated
   if (!authState.isAuthenticated) {
-    return <LoginPage onLogin={handleLogin} />
+    return <LoginPage onLogin={handleLogin} isDark={dark} toggleDark={toggleDark} />
   }
 
   // Show main app if authenticated
@@ -91,11 +108,12 @@ export default function SidePanel() {
         <div className="relative z-20 shrink-0 border-b-4 border-ink bg-white p-4 pb-0 dark:bg-slate-900">
           <div className="mb-4 flex items-center justify-between px-2">
             <div className="flex items-center space-x-3">
-              <div className="group relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border-2 border-ink bg-gradient-to-br from-blue-400 to-blue-600 shadow-comic">
-                <div className="absolute inset-0 bg-white opacity-20 transition-opacity group-hover:opacity-0" />
-                <span className="material-icons-outlined text-3xl text-white drop-shadow-md">
-                  surfing
-                </span>
+              <div className="group relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border-2 border-ink bg-white shadow-comic">
+                <img
+                  src={logo}
+                  alt="Silver Surfer"
+                  className="h-full w-full object-cover"
+                />
               </div>
 
               <div className="flex flex-col justify-center">
@@ -107,9 +125,11 @@ export default function SidePanel() {
                     ISSUE #1
                   </span>
                   <span className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                    {authState.user?.name || authState.user?.email || "User"}
-                    {tab === "chat" ? "Assistant" : "Settings"}
+                    {tab === "chat" ? "Assistant" : tab === "settings" ? "Settings" : "Test Lab"}
                   </span>
+                </div>
+                <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                  {authState.user?.name || authState.user?.email || "User"}
                 </div>
               </div>
             </div>
@@ -117,7 +137,7 @@ export default function SidePanel() {
             <div className="flex items-center gap-2">
               <button
                 className="flex h-10 w-10 items-center justify-center rounded-lg border-2 border-ink bg-gray-200 text-ink shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-comic-hover dark:bg-slate-700 dark:text-white"
-                onClick={() => setDark((v) => !v)}
+                onClick={toggleDark}
                 aria-label="Toggle dark mode">
                 <span className="material-icons-outlined">brightness_4</span>
               </button>
@@ -135,13 +155,13 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("chat")}
-                className={`w-full rounded-t-lg py-3 px-4 text-xl font-bold transition-colors ${
+                className={`w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
                   tab === "chat"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-primary text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}>
-                <span className="font-display flex items-center justify-center gap-2 tracking-widest">
-                  <span className="material-icons-outlined text-2xl">
+                <span className="font-display flex items-center justify-center gap-1 tracking-widest">
+                  <span className="material-icons-outlined text-lg">
                     chat_bubble
                   </span>
                   CHAT
@@ -151,14 +171,31 @@ export default function SidePanel() {
 
             <div className="relative flex-1">
               <button
+                onClick={() => setTab("test")}
+                className={`w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
+                  tab === "test"
+                    ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-purple-600 text-white"
+                    : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                }`}>
+                <span className="font-display flex items-center justify-center gap-1 tracking-widest">
+                  <span className="material-icons-outlined text-lg">
+                    science
+                  </span>
+                  TEST
+                </span>
+              </button>
+            </div>
+
+            <div className="relative flex-1">
+              <button
                 onClick={() => setTab("settings")}
-                className={`mr-1 w-full rounded-t-lg py-3 px-4 text-xl font-bold transition-colors ${
+                className={`mr-1 w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
                   tab === "settings"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-blue-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}>
-                <span className="font-display flex items-center justify-center gap-2 tracking-widest">
-                  <span className="material-icons-outlined text-2xl">
+                <span className="font-display flex items-center justify-center gap-1 tracking-widest">
+                  <span className="material-icons-outlined text-lg">
                     settings
                   </span>
                   SETTINGS
@@ -171,6 +208,8 @@ export default function SidePanel() {
         {/* Body */}
         {tab === "settings" ? (
           <SettingsTab />
+        ) : tab === "test" ? (
+          <TestTab />
         ) : (
           <div className="comic-scroll bg-dots flex-1 space-y-8 overflow-y-auto border-t-4 border-ink bg-white bg-halftone-light p-4 dark:bg-slate-800 dark:bg-halftone-dark">
             {/* Assistant message */}
