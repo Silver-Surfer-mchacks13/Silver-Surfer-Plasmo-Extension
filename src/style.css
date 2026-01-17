@@ -25,7 +25,54 @@
     background: #94a3b8;
     border: 2px solid black;
   }
-  .comic-scroll::-webkit-scrollbar-thumb:hover {
-    background: #64748b;
+
+  .boom-bubble {
+    clip-path: polygon(
+      0% 15%,
+      15% 15%,
+      15% 0%,
+      85% 0%,
+      85% 15%,
+      100% 15%,
+      100% 85%,
+      85% 85%,
+      85% 100%,
+      15% 100%,
+      15% 85%,
+      0% 85%
+    );
+  }
+
+  .jagged-burst {
+    clip-path: polygon(
+      50% 0%,
+      65% 25%,
+      100% 10%,
+      85% 45%,
+      100% 75%,
+      65% 75%,
+      50% 100%,
+      35% 75%,
+      0% 75%,
+      15% 45%,
+      0% 10%,
+      35% 25%
+    );
+  }
+
+  .toggle-lever-base {
+    background: linear-gradient(180deg, #d1d5db 0%, #9ca3af 100%);
+    border: 2px solid #000;
+  }
+
+  .toggle-lever-handle {
+    background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+    border: 2px solid #000;
+    box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.3);
+  }
+
+  .toggle-active .toggle-lever-handle {
+    background: linear-gradient(180deg, #22c55e 0%, #15803d 100%);
+    transform: translateX(24px);
   }
 }
