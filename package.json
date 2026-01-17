@@ -28,17 +28,17 @@
     "typescript": "5.3.3"
   },
   "manifest": {
-    "host_permissions": [
-      "https://*/*",
-      "http://localhost:5000/*"
-    ],
-    "permissions": [
-      "sidePanel",
-      "storage",
-      "tabs"
-    ],
-    "side_panel": {
-      "default_path": "sidepanel.html"
-    }
+  "host_permissions": [
+    "https://*/*", 
+    "http://localhost:5000/*" 
+  ],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
   }
 }

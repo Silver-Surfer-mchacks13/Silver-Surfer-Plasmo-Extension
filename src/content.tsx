@@ -7,6 +7,15 @@ export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
 }
 
+// Listen for HTML extraction requests from background script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "EXTRACT_HTML") {
+    const html = document.documentElement.outerHTML
+    sendResponse({ html, url: window.location.href })
+  }
+  return true
+})
+
 /**
  * Generates a style element with adjusted CSS to work correctly within a Shadow DOM.
  *
