@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "~lib/constants"
+import { getAuthState, login, logout } from "~lib/auth-service"
 
 export {}
 
@@ -26,6 +27,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: err.message })
       })
     return true // Keep the channel open for async response
+  }
+
+  if (request.action === "AUTH_LOGIN") {
+    login()
+      .then((authState) => sendResponse({ success: true, data: authState }))
+      .catch((err) => {
+        console.error("Auth Login Error:", err)
+        sendResponse({ success: false, error: err.message })
+      })
+    return true
+  }
+
+  if (request.action === "AUTH_LOGOUT") {
+    logout()
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error("Auth Logout Error:", err)
+        sendResponse({ success: false, error: err.message })
+      })
+    return true
+  }
+
+  if (request.action === "AUTH_GET_STATE") {
+    getAuthState()
+      .then((authState) => sendResponse({ success: true, data: authState }))
+      .catch((err) => {
+        console.error("Auth Get State Error:", err)
+        sendResponse({ success: false, error: err.message })
+      })
+    return true
   }
 
   if (request.action === "CAPTURE_SCREENSHOT") {

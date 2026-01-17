@@ -28,6 +28,7 @@
     "typescript": "5.3.3"
   },
   "manifest": {
+  "key": "$CRX_KEY",
   "host_permissions": [
     "https://*/*", 
     "http://localhost:5000/*" 
@@ -36,9 +37,11 @@
     "sidePanel",
     "storage",
     "tabs",
-    "activeTab"
+    "activeTab",
+    "identity"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"
   }
+}
 }
