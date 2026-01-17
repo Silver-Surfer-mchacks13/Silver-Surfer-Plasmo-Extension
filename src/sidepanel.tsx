@@ -1,7 +1,7 @@
 // src/sidepanel.tsx
 import { useMemo, useState } from "react"
 import "./style.css"
-import "./components/settings_tab"
+import SettingsTab from "./components/settings_tab"
 
 
 export default function SidePanel() {
