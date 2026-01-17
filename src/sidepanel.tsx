@@ -32,7 +32,7 @@ export default function SidePanel() {
 
               <div className="flex flex-col justify-center">
                 <h1 className="font-display text-4xl leading-none tracking-wide text-transparent drop-shadow-[2px_2px_0px_rgba(0,0,0,1)] bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 dark:from-blue-400 dark:to-cyan-300">
-                  SILVER HELPER
+                  SILVER SURFER
                 </h1>
                 <div className="flex items-center gap-2">
                   <span className="inline-block -rotate-2 border border-black bg-yellow-300 px-1 text-xs font-bold text-black">
