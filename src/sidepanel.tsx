@@ -17,7 +17,8 @@ export default function SidePanel() {
     isAuthenticated: false,
     user: null,
     accessToken: null,
-    idToken: null
+    backendAccessToken: null,
+    backendRefreshToken: null
   })
 
   // Check auth state and theme on mount
@@ -65,7 +66,8 @@ export default function SidePanel() {
           isAuthenticated: false,
           user: null,
           accessToken: null,
-          idToken: null
+          backendAccessToken: null,
+          backendRefreshToken: null
         })
       }
     })
