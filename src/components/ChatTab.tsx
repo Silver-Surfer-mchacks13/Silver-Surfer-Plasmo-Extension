@@ -59,10 +59,17 @@ function ActionBadge({ action }: { action: ConversationAction }) {
   const { icon, label, color } = getActionInfo()
 
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-bold ${color} text-ink dark:text-white`}>
-      <span className="material-icons-outlined text-sm">{icon}</span>
-      {label}
-    </span>
+    <div className="flex flex-col items-start">
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-bold ${color} text-ink dark:text-white`}>
+        <span className="material-icons-outlined text-sm">{icon}</span>
+        {label}
+      </span>
+      {action.reasoning && (
+        <span className="text-[10px] text-gray-600 dark:text-gray-400 mt-1 max-w-[200px] leading-tight">
+          {action.reasoning}
+        </span>
+      )}
+    </div>
   )
 }
 
