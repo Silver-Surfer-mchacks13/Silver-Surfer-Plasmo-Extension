@@ -11,7 +11,9 @@ import {
   clickElement,
   fillFormField,
   selectDropdown,
-  distillDOM
+  distillDOM,
+  applySimplification,
+  removeSimplification
 } from "~lib/page-actions"
 
 export const config: PlasmoCSConfig = {
@@ -93,6 +95,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true
   }
 
+  // Page Simplification handlers
+  if (request.action === "APPLY_SIMPLIFICATION") {
+    // New overlay-based simplification expects content object with title, sections, message
+    const result = applySimplification(request.content)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "REMOVE_SIMPLIFICATION") {
+    const result = removeSimplification()
+    sendResponse(result)
+    return true
+  }
+
   return true
 })
 
@@ -126,5 +142,7 @@ export const getStyle = (): HTMLStyleElement => {
   return styleElement
 }
 
-// Overlay component removed - no longer needed
-// export default PlasmoOverlay
+// Provide a stub component so Plasmo's CSUI pipeline has a valid default export
+const EmptyOverlay = () => null
+
+export default EmptyOverlay

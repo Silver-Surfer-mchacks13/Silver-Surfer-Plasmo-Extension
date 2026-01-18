@@ -6,6 +6,7 @@ import "./style.css"
 import SettingsTab from "./components/settings_tab"
 import TestTab from "./components/TestTab"
 import ChatTab from "./components/ChatTab"
+import SimplifyTab from "./components/SimplifyTab"
 import logo from "data-base64:~assets/final_logo.svg"
 
 
@@ -69,7 +70,7 @@ export default function SidePanel() {
       }
     })
   }
-  const [tab, setTab] = useState<"chat" | "settings" | "test">("chat")
+  const [tab, setTab] = useState<"chat" | "simplify" | "settings" | "history">("chat")
 
   const rootClass = useMemo(
     () =>
@@ -128,7 +129,7 @@ export default function SidePanel() {
                     ISSUE #1
                   </span>
                   <span className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                    {tab === "chat" ? "Assistant" : tab === "settings" ? "Settings" : "Test Lab"}
+                    {tab === "chat" ? "Assistant" : tab === "simplify" ? "Simplify" : tab === "settings" ? "Settings" : "Test Lab"}
                   </span>
                 </div>
                 <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
@@ -158,13 +159,13 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("chat")}
-                className={`w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
+                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
                   tab === "chat"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-primary text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}>
-                <span className="font-display flex items-center justify-center gap-1 tracking-widest">
-                  <span className="material-icons-outlined text-lg">
+                <span className="font-display flex items-center justify-center gap-1 tracking-wide">
+                  <span className="material-icons-outlined text-base">
                     chat_bubble
                   </span>
                   CHAT
@@ -174,17 +175,34 @@ export default function SidePanel() {
 
             <div className="relative flex-1">
               <button
-                onClick={() => setTab("test")}
-                className={`w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
-                  tab === "test"
+                onClick={() => setTab("simplify")}
+                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
+                  tab === "simplify"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-purple-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}>
-                <span className="font-display flex items-center justify-center gap-1 tracking-widest">
-                  <span className="material-icons-outlined text-lg">
+                <span className="font-display flex items-center justify-center gap-1 tracking-wide">
+                  <span className="material-icons-outlined text-base">
+                    auto_fix_high
+                  </span>
+                  SIMPLIFY
+                </span>
+              </button>
+            </div>
+
+            <div className="relative flex-1">
+              <button
+                onClick={() => setTab("history")}
+                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
+                  tab === "history"
+                    ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-orange-600 text-white"
+                    : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                }`}>
+                <span className="font-display flex items-center justify-center gap-1 tracking-wide">
+                  <span className="material-icons-outlined text-base">
                     science
                   </span>
-                  TEST
+                  HISTORY
                 </span>
               </button>
             </div>
@@ -192,13 +210,13 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("settings")}
-                className={`mr-1 w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
+                className={`mr-1 w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
                   tab === "settings"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-blue-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}>
-                <span className="font-display flex items-center justify-center gap-1 tracking-widest">
-                  <span className="material-icons-outlined text-lg">
+                <span className="font-display flex items-center justify-center gap-1 tracking-wide">
+                  <span className="material-icons-outlined text-base">
                     settings
                   </span>
                   SETTINGS
@@ -211,8 +229,10 @@ export default function SidePanel() {
         {/* Body */}
         {tab === "settings" ? (
           <SettingsTab />
-        ) : tab === "test" ? (
+        ) : tab === "history" ? (
           <TestTab />
+        ) : tab === "simplify" ? (
+          <SimplifyTab />
         ) : (
           <ChatTab />
         )}

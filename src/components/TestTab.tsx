@@ -1,451 +1,456 @@
-// src/components/TestTab.tsx
-import { useState } from "react"
+// src/components/TestTab.tsx  (History / Past Chats)
+import { useEffect, useMemo, useState } from "react"
 
-interface TestResult {
-  success: boolean
-  message: string
-  action: string
+type ChatMessage = {
+  id: string
+  role: "user" | "assistant"
+  text: string
+  ts: number
 }
 
-interface DistilledDOM {
-  url: string
+type ChatThread = {
+  id: string
   title: string
-  metaDescription: string | null
-  fullText: string
-  timestamp: string
-  viewport: { width: number; height: number }
-  summary: {
-    totalElements: number
-    interactiveElements: number
-    headings: number
-    links: number
-    buttons: number
-    inputs: number
-    images: number
-  }
-  elements: Array<{
-    index: number
-    selector: string
-    tag: string
-    text?: string
-    isInteractive: boolean
-  }>
+  updatedAt: number
+  messages: ChatMessage[]
 }
 
-export default function TestTab() {
-  const [selector, setSelector] = useState("")
-  const [value, setValue] = useState("")
-  const [scaleFactor, setScaleFactor] = useState("1.3")
-  const [results, setResults] = useState<TestResult[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [distilledDOM, setDistilledDOM] = useState<DistilledDOM | null>(null)
-  const [showDistilled, setShowDistilled] = useState(false)
+const STORAGE_KEY = "silver_chat_threads"
+const ACTIVE_KEY = "silver_chat_active_thread"
 
-  const addResult = (action: string, result: { success: boolean; message: string }) => {
-    setResults((prev) => [{ ...result, action }, ...prev].slice(0, 10))
+/* ------------------ storage helpers ------------------ */
+async function loadThreads(): Promise<ChatThread[]> {
+  try {
+    const res = await chrome.storage.local.get([STORAGE_KEY])
+    return Array.isArray(res[STORAGE_KEY]) ? (res[STORAGE_KEY] as ChatThread[]) : []
+  } catch {
+    return []
   }
+}
 
-  const sendToContent = async (action: string, data: Record<string, unknown> = {}) => {
-    setIsLoading(true)
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id) {
-        addResult(action, { success: false, message: "No active tab found" })
-        return null
-      }
-
-      const response = await chrome.tabs.sendMessage(tab.id, { action, ...data })
-      addResult(action, response || { success: false, message: "No response from content script" })
-      return response
-    } catch (error) {
-      addResult(action, { success: false, message: error instanceof Error ? error.message : "Unknown error" })
-      return null
-    } finally {
-      setIsLoading(false)
-    }
+async function saveThreads(threads: ChatThread[]) {
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEY]: threads })
+  } catch {
+    // ignore
   }
+}
 
-  const handleDistillDOM = async () => {
-    const response = await sendToContent("DISTILL_DOM")
-    if (response?.success && response.data) {
-      setDistilledDOM(response.data)
-      setShowDistilled(true)
-    }
+async function loadActiveThreadId(): Promise<string | null> {
+  try {
+    const res = await chrome.storage.local.get([ACTIVE_KEY])
+    return typeof res[ACTIVE_KEY] === "string" ? (res[ACTIVE_KEY] as string) : null
+  } catch {
+    return null
   }
+}
 
-  const testActions = [
-    {
-      name: "Highlight Element",
-      icon: "highlight",
-      color: "bg-yellow-100 dark:bg-yellow-900",
-      action: () => sendToContent("HIGHLIGHT_ELEMENT", { selector }),
-      needsSelector: true
-    },
-    {
-      name: "Remove Highlights",
-      icon: "highlight_off",
-      color: "bg-gray-100 dark:bg-gray-700",
-      action: () => sendToContent("REMOVE_HIGHLIGHTS"),
-      needsSelector: false
-    },
-    {
-      name: "Remove Clutter",
-      icon: "cleaning_services",
-      color: "bg-green-100 dark:bg-green-900",
-      action: () => sendToContent("REMOVE_CLUTTER"),
-      needsSelector: false
-    },
-    {
-      name: "Restore Clutter",
-      icon: "restore",
-      color: "bg-gray-100 dark:bg-gray-700",
-      action: () => sendToContent("RESTORE_CLUTTER"),
-      needsSelector: false
-    },
-    {
-      name: "Magnify Text",
-      icon: "text_increase",
-      color: "bg-blue-100 dark:bg-blue-900",
-      action: () => sendToContent("MAGNIFY_TEXT", { selector, scaleFactor: parseFloat(scaleFactor) }),
-      needsSelector: true
-    },
-    {
-      name: "Reset Magnification",
-      icon: "text_decrease",
-      color: "bg-gray-100 dark:bg-gray-700",
-      action: () => sendToContent("RESET_MAGNIFICATION"),
-      needsSelector: false
-    },
-    {
-      name: "Scroll to View",
-      icon: "center_focus_strong",
-      color: "bg-purple-100 dark:bg-purple-900",
-      action: () => sendToContent("SCROLL_TO_VIEW", { selector }),
-      needsSelector: true
-    },
-    {
-      name: "Click Element",
-      icon: "touch_app",
-      color: "bg-orange-100 dark:bg-orange-900",
-      action: () => sendToContent("CLICK_ELEMENT", { selector }),
-      needsSelector: true
-    },
-    {
-      name: "Fill Form Field",
-      icon: "edit_note",
-      color: "bg-cyan-100 dark:bg-cyan-900",
-      action: () => sendToContent("FILL_FORM_FIELD", { selector, value }),
-      needsSelector: true,
-      needsValue: true
-    },
-    {
-      name: "Select Dropdown",
-      icon: "arrow_drop_down_circle",
-      color: "bg-pink-100 dark:bg-pink-900",
-      action: () => sendToContent("SELECT_DROPDOWN", { selector, value }),
-      needsSelector: true,
-      needsValue: true
-    }
+async function saveActiveThreadId(id: string) {
+  try {
+    await chrome.storage.local.set({ [ACTIVE_KEY]: id })
+  } catch {
+    // ignore
+  }
+}
+
+/* ------------------ demo seeding (manual only) ------------------ */
+function uid(prefix = "id") {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`
+}
+
+function makeThread(
+  title: string,
+  baseTs: number,
+  lines: Array<[ChatMessage["role"], string]>
+): ChatThread {
+  const messages: ChatMessage[] = lines.map(([role, text], i) => ({
+    id: uid("msg"),
+    role,
+    text,
+    ts: baseTs + i * 60_000
+  }))
+
+  return {
+    id: uid("thread"),
+    title,
+    updatedAt: messages[messages.length - 1]?.ts ?? baseTs,
+    messages
+  }
+}
+
+function buildDemoThreads(): ChatThread[] {
+  const now = Date.now()
+
+  const t1 = makeThread("Make this page readable", now - 1000 * 60 * 60 * 18, [
+    ["assistant", "Greetings, Traveler! I’m your Silver Assistant. What do you need?"],
+    ["user", "Text is tiny. Make it bigger please."],
+    ["assistant", "Boosted by 20% ✅ Want more or reset?"],
+    ["user", "Highlight the headline too."],
+    ["assistant", "Highlighted `h1` ✅"],
+    ["user", "Remove clutter (ads/popups)."],
+    ["assistant", "Clutter removed ✅. I can restore if needed."]
+  ])
+
+  const t2 = makeThread("Checkout help", now - 1000 * 60 * 60 * 6, [
+    ["user", "I’m stuck on checkout."],
+    ["assistant", "Scrolling to form ✅"],
+    ["user", "It wants a phone number."],
+    ["assistant", "Send it and I’ll fill it."],
+    ["user", "5141234567"],
+    ["assistant", "Filled ✅ Click submit?"],
+    ["user", "Yes"],
+    ["assistant", "Clicked ✅"]
+  ])
+
+  const lines: Array<[ChatMessage["role"], string]> = [
+    ["assistant", "Scroll test time 😄"],
+    ["user", "Make it long please."],
+    ["assistant", "Done. This thread is just for scrollbar testing."]
   ]
+  for (let i = 1; i <= 25; i++) {
+    lines.push(["user", `Dummy message #${i} — keep comic UI consistent.`])
+    lines.push(["assistant", `Reply #${i} — borders, shadows, bubbles ✅`])
+  }
+  const t3 = makeThread("Scrollbar Stress Test", now - 1000 * 60 * 60 * 2, lines)
 
-return (
-  <div className="ss-dot-bg flex-1 overflow-hidden border-t-4 border-black">
-    <div className="custom-scrollbar h-full overflow-y-auto p-4 pb-10 space-y-6">
-      {/* TEST PARAMETERS */}
-      <section className="comic-panel rounded-lg bg-white p-6 dark:bg-slate-700">
-        <h2 className="font-display mb-6 text-2xl italic tracking-wide text-slate-900 dark:text-white">
-          TEST PARAMETERS
-        </h2>
+  return [t1, t2, t3].sort((a, b) => b.updatedAt - a.updatedAt)
+}
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="block text-lg font-bold text-slate-700 dark:text-slate-300">
-              CSS Selector
-            </label>
-            <input
-              type="text"
-              value={selector}
-              onChange={(e) => setSelector(e.target.value)}
-              placeholder="e.g., h1, .class-name, #id"
-              className="w-full rounded border-2 border-black p-3 outline-none transition-all
-                         bg-white text-slate-900 placeholder:text-slate-400
-                         focus:ring-2 focus:ring-purple-500 focus:border-black
-                         dark:bg-slate-700 dark:text-slate-100 dark:placeholder:text-slate-500"
-            />
-          </div>
+/* ------------------ component ------------------ */
+export default function TestTab() {
+  const [threads, setThreads] = useState<ChatThread[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
-          <div className="space-y-2">
-            <label className="block text-lg font-bold text-slate-700 dark:text-slate-300">
-              Value (for fill/select)
-            </label>
-            <input
-              type="text"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="e.g., John Doe, Option 1"
-              className="w-full rounded border-2 border-black p-3 outline-none transition-all
-                         bg-white text-slate-900 placeholder:text-slate-400
-                         focus:ring-2 focus:ring-purple-500 focus:border-black
-                         dark:bg-slate-700 dark:text-slate-100 dark:placeholder:text-slate-500"
-            />
-          </div>
+  // Clear UI state
+  const [clearOpen, setClearOpen] = useState(false)
+  const [selectedToClear, setSelectedToClear] = useState<Record<string, boolean>>({})
 
-          <div className="space-y-2">
-            <label className="block text-lg font-bold text-slate-700 dark:text-slate-300">
-              Scale Factor (for magnify)
-            </label>
-            <input
-              type="number"
-              value={scaleFactor}
-              onChange={(e) => setScaleFactor(e.target.value)}
-              step="0.1"
-              min="1"
-              max="3"
-              className="w-full rounded border-2 border-black p-3 outline-none transition-all
-                         bg-white text-slate-900
-                         focus:ring-2 focus:ring-purple-500 focus:border-black
-                         dark:bg-slate-700 dark:text-slate-100"
-            />
-          </div>
+  const activeThread = useMemo(
+    () => threads.find((t) => t.id === activeId) ?? null,
+    [threads, activeId]
+  )
+
+  const refresh = async () => {
+    setIsLoading(true)
+
+    const loaded = await loadThreads()
+    const sorted = loaded.sort((a, b) => b.updatedAt - a.updatedAt)
+
+    const savedActive = await loadActiveThreadId()
+    const fallbackActive =
+      savedActive && sorted.some((t) => t.id === savedActive) ? savedActive : null
+
+    setThreads(sorted)
+    setActiveId(fallbackActive)
+
+    // Sync selection map with threads
+    const map: Record<string, boolean> = {}
+    for (const t of sorted) map[t.id] = false
+    setSelectedToClear(map)
+
+    setIsLoading(false)
+  }
+
+  const seedDemo = async () => {
+    const demo = buildDemoThreads()
+    await saveThreads(demo)
+    await saveActiveThreadId(demo[0]?.id ?? "")
+    await refresh()
+  }
+
+  const openClearDialog = () => {
+    const map: Record<string, boolean> = {}
+    for (const t of threads) map[t.id] = false
+    setSelectedToClear(map)
+    setClearOpen(true)
+  }
+
+  const selectAll = (val: boolean) => {
+    const next: Record<string, boolean> = {}
+    for (const t of threads) next[t.id] = val
+    setSelectedToClear(next)
+  }
+
+  const confirmClearSelected = async () => {
+    const ids = Object.entries(selectedToClear)
+      .filter(([, v]) => v)
+      .map(([k]) => k)
+
+    // If nothing selected, don't clear; keep dialog open
+    if (ids.length === 0) return
+
+    const remaining = threads.filter((t) => !ids.includes(t.id))
+    await saveThreads(remaining)
+
+    const nextActive = remaining.some((t) => t.id === activeId) ? activeId : null
+    await saveActiveThreadId(nextActive ?? "")
+
+    setClearOpen(false)
+    await refresh()
+  }
+
+  useEffect(() => {
+    refresh()
+
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string
+    ) => {
+      if (area !== "local") return
+      if (changes[STORAGE_KEY] || changes[ACTIVE_KEY]) refresh()
+    }
+
+    chrome.storage.onChanged.addListener(onChanged)
+    return () => chrome.storage.onChanged.removeListener(onChanged)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const noThreads = !isLoading && threads.length === 0
+  const noSelection = !isLoading && threads.length > 0 && !activeThread
+
+  return (
+    <div className="comic-scroll bg-dots flex-1 overflow-y-auto border-t-4 border-ink bg-white bg-halftone-light p-4 dark:bg-slate-800 dark:bg-halftone-dark">
+      {/* Top controls */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 border-ink bg-white p-3 shadow-comic dark:bg-slate-700">
+        <div>
+          <h3 className="font-display text-xl uppercase tracking-wider text-ink dark:text-white">
+            Chat History
+          </h3>
+          <p className="text-xs font-bold text-gray-600 dark:text-gray-300">
+            Click a thread to view its messages
+          </p>
         </div>
-      </section>
 
-      {/* PAGE ACTIONS */}
-      <section className="comic-panel rounded-lg bg-white p-6 dark:bg-slate-700">
-        <h2 className="font-display mb-6 text-2xl italic tracking-wide text-slate-900 dark:text-white">
-          PAGE ACTIONS
-        </h2>
-
-        <div className="grid grid-cols-2 gap-3">
-          {testActions.map((action) => (
-            <button
-              key={action.name}
-              onClick={action.action}
-              disabled={
-                isLoading ||
-                (action.needsSelector && !selector) ||
-                (action.needsValue && !value)
-              }
-              className={[
-                "h-14 w-full", // fixed height + full width
-                "flex items-center gap-2",
-                "px-4",
-                "border-2 border-black rounded",
-                "shadow-[2px_2px_0px_rgba(0,0,0,1)]",
-                "font-bold transition-all",
-                "hover:brightness-110 active:translate-y-0.5 active:shadow-none",
-                "text-slate-900 dark:text-slate-200",
-                action.color,
-                "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
-              ].join(" ")}>
-              <span className="material-icons-outlined text-lg w-5 text-center">{action.icon}</span>
-              <span className="line-clamp-2 text-sm leading-tight">{action.name}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* RESULTS */}
-      <section className="comic-panel rounded-lg bg-white p-6 dark:bg-slate-700">
-        <h2 className="font-display mb-4 text-2xl italic uppercase tracking-wide text-slate-900 dark:text-white">
-          Results
-        </h2>
-
-        {results.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded border-2 border-dashed border-slate-400 dark:border-slate-600">
-            <p className="font-semibold italic text-slate-600 dark:text-slate-400">
-              No results yet. Try an action above!
-            </p>
-          </div>
-        ) : (
-          <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-            {results.map((result, index) => (
-              <div
-                key={index}
-                className={[
-                  "rounded border-2 border-black p-3",
-                  result.success ? "bg-green-200/60 dark:bg-green-900/30" : "bg-red-200/60 dark:bg-red-900/30"
-                ].join(" ")}>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={[
-                      "material-icons-outlined text-lg",
-                      result.success ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"
-                    ].join(" ")}>
-                    {result.success ? "check_circle" : "error"}
-                  </span>
-                  <span className="font-bold text-slate-900 dark:text-white">{result.action}</span>
-                </div>
-                <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">{result.message}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {results.length > 0 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setResults([])}
-            className="mt-4 w-full rounded border-2 border-black bg-slate-200 px-4 py-3 font-bold text-slate-900 shadow-[2px_2px_0px_rgba(0,0,0,1)] transition-all hover:brightness-110 active:translate-y-0.5 active:shadow-none dark:bg-slate-700 dark:text-slate-200">
-            Clear Results
+            onClick={refresh}
+            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-gray-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
+            <span className="material-icons-outlined text-lg">refresh</span>
+            <span className="text-sm">Refresh</span>
           </button>
-        )}
-      </section>
 
-      {/* QUICK TIPS */}
-      <section className="comic-panel mb-8 rounded-lg bg-white p-6 dark:bg-slate-700">
-        <div className="mb-4 flex items-center gap-2">
-          <span className="text-2xl">💡</span>
-          <h2 className="font-display text-2xl italic uppercase tracking-wide text-blue-700 dark:text-blue-300">
-            Quick Tips
-          </h2>
+          <button
+            onClick={seedDemo}
+            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-yellow-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-yellow-900/40 dark:text-white">
+            <span className="material-icons-outlined text-lg">auto_fix_high</span>
+            <span className="text-sm">Seed Demo</span>
+          </button>
+
+          <button
+            onClick={openClearDialog}
+            disabled={threads.length === 0}
+            className={[
+              "flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 font-bold shadow-comic transition-all",
+              "hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover",
+              "bg-red-100 text-ink dark:bg-red-900/40 dark:text-white",
+              "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-x-0 disabled:hover:translate-y-0"
+            ].join(" ")}>
+            <span className="material-icons-outlined text-lg">delete</span>
+            <span className="text-sm">Clear</span>
+          </button>
         </div>
-
-        <ul className="space-y-3 text-sm font-semibold text-slate-700 dark:text-slate-300">
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
-            Use{" "}
-            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
-              h1
-            </span>{" "}
-            to select the first heading
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
-            Use{" "}
-            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
-              p
-            </span>{" "}
-            to select the first paragraph
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
-            Use{" "}
-            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
-              .classname
-            </span>{" "}
-            for class selectors
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
-            Use{" "}
-            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
-              #id
-            </span>{" "}
-            for ID selectors
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
-            Use{" "}
-            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
-              input[type="text"]
-            </span>{" "}
-            for inputs
-          </li>
-        </ul>
-      </section>
-
-      {/* DOM Distiller Section */}
-      <div className="rounded-lg border-2 border-ink bg-purple-50 p-4 shadow-comic dark:bg-purple-900/30">
-        <h3 className="mb-3 font-display text-lg font-bold text-purple-800 dark:text-purple-300">
-          🔬 DOM Distiller
-        </h3>
-        <p className="mb-3 text-xs text-purple-700 dark:text-purple-200">
-          Extract a structured, LLM-friendly representation of the page's interactive elements.
-        </p>
-        <button
-          onClick={handleDistillDOM}
-          disabled={isLoading}
-          className="w-full rounded-lg border-2 border-ink bg-purple-500 px-4 py-3 font-bold text-white shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:bg-purple-600 hover:shadow-comic-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span className="flex items-center justify-center gap-2">
-            <span className="material-icons-outlined">data_object</span>
-            Distill Page DOM
-          </span>
-        </button>
       </div>
 
-      {/* Distilled DOM Output */}
-      {showDistilled && distilledDOM && (
-        <div className="rounded-lg border-2 border-ink bg-gray-900 p-4 shadow-comic">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-display text-lg font-bold text-green-400">
-              📊 Distilled DOM
-            </h3>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(JSON.stringify(distilledDOM, null, 2))
-                  addResult("COPY_JSON", { success: true, message: "JSON copied to clipboard!" })
-                }}
-                className="rounded border border-green-500 bg-green-900/50 px-2 py-1 text-xs font-bold text-green-400 hover:bg-green-800"
-              >
-                Copy JSON
-              </button>
-              <button
-                onClick={() => setShowDistilled(false)}
-                className="rounded border border-gray-500 bg-gray-800 px-2 py-1 text-xs font-bold text-gray-400 hover:bg-gray-700"
-              >
-                Close
-              </button>
+      {/* Clear modal (checkbox selection) */}
+      {clearOpen && (
+        <div className="mb-4 rounded-lg border-2 border-ink bg-white p-4 shadow-comic dark:bg-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="font-display text-lg uppercase tracking-wider text-ink dark:text-white">
+                Clear chats
+              </h4>
+              <p className="text-xs font-bold text-gray-600 dark:text-gray-300">
+                Select which threads to delete (or select all).
+              </p>
+            </div>
+
+            <button
+              onClick={() => setClearOpen(false)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-ink bg-gray-100 text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white"
+              aria-label="Close clear dialog">
+              <span className="material-icons-outlined">close</span>
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => selectAll(true)}
+              className="rounded-lg border-2 border-ink bg-blue-100 px-3 py-2 text-xs font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-blue-900/40 dark:text-white">
+              Select all
+            </button>
+            <button
+              onClick={() => selectAll(false)}
+              className="rounded-lg border-2 border-ink bg-gray-100 px-3 py-2 text-xs font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
+              Select none
+            </button>
+          </div>
+
+          <div className="mt-4 max-h-48 overflow-y-auto pr-1 comic-scroll space-y-2">
+            {threads.map((t) => (
+              <label
+                key={t.id}
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border-2 border-ink bg-gray-50 p-3 shadow-comic dark:bg-slate-600">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-ink dark:text-white">
+                    {t.title}
+                  </p>
+                  <p className="line-clamp-2 text-xs font-bold text-gray-600 dark:text-gray-200">
+                    {t.messages[t.messages.length - 1]?.text ?? ""}
+                  </p>
+                </div>
+
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 accent-blue-600"
+                  checked={!!selectedToClear[t.id]}
+                  onChange={(e) =>
+                    setSelectedToClear((prev) => ({ ...prev, [t.id]: e.target.checked }))
+                  }
+                />
+              </label>
+            ))}
+          </div>
+
+          {/* Message when none selected */}
+          {Object.values(selectedToClear).every((v) => !v) && (
+            <p className="mt-3 text-center text-xs font-bold text-gray-600 dark:text-gray-300">
+              Please select a chat to clear.
+            </p>
+          )}
+
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => setClearOpen(false)}
+              className="flex-1 rounded-lg border-2 border-ink bg-gray-100 px-3 py-3 text-sm font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
+              Cancel
+            </button>
+
+            <button
+              onClick={confirmClearSelected}
+              className="flex-1 rounded-lg border-2 border-ink bg-red-200 px-3 py-3 text-sm font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-red-900/40 dark:text-white">
+              Clear selected
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading / empty / main */}
+      {isLoading ? (
+        <div className="rounded-lg border-2 border-ink bg-white p-4 text-center shadow-comic dark:bg-slate-700">
+          <p className="font-bold text-gray-600 dark:text-gray-300">Loading…</p>
+        </div>
+      ) : noThreads ? (
+        <div className="rounded-lg border-2 border-ink bg-white p-4 text-center shadow-comic dark:bg-slate-700">
+          <p className="font-bold text-gray-600 dark:text-gray-300">
+            No history yet — send a message in Chat!
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          {/* Thread list (scrollable) */}
+          <div className="rounded-lg border-2 border-ink bg-white p-3 shadow-comic dark:bg-slate-700">
+            <h4 className="mb-2 font-display text-lg uppercase tracking-wider text-ink dark:text-white">
+              Threads
+            </h4>
+
+            <div className="comic-scroll max-h-56 overflow-y-auto pr-1 space-y-2">
+              {threads.map((t) => {
+                const active = t.id === activeId
+                const preview = t.messages[t.messages.length - 1]?.text ?? ""
+
+                return (
+                  <button
+                    key={t.id}
+                    onClick={async () => {
+                      setActiveId(t.id)
+                      await saveActiveThreadId(t.id)
+                    }}
+                    className={[
+                      "w-full rounded-lg border-2 border-ink p-3 text-left shadow-comic transition-all",
+                      "hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover",
+                      active ? "bg-blue-100 dark:bg-blue-900" : "bg-gray-50 dark:bg-slate-600"
+                    ].join(" ")}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="material-icons-outlined text-lg">history</span>
+                          <p className="truncate font-bold text-ink dark:text-white">{t.title}</p>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs font-bold text-gray-600 dark:text-gray-200">
+                          {preview}
+                        </p>
+                      </div>
+
+                      <div className="shrink-0 text-[10px] font-bold text-gray-500 dark:text-gray-200">
+                        {new Date(t.updatedAt).toLocaleString()}
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
 
-          {/* Page Meta Info */}
-          <div className="mb-3 rounded bg-gray-800 p-2">
-            <div className="text-xs text-gray-400">
-              <span className="font-bold text-white">Title:</span> {distilledDOM.title}
+          {/* Messages */}
+          <div className="rounded-lg border-2 border-ink bg-white p-3 shadow-comic dark:bg-slate-700">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h4 className="font-display text-lg uppercase tracking-wider text-ink dark:text-white">
+                {activeThread ? activeThread.title : "History"}
+              </h4>
+              <div className="text-xs font-bold text-gray-600 dark:text-gray-200">
+                {activeThread ? `${activeThread.messages.length} messages` : ""}
+              </div>
             </div>
-            {distilledDOM.metaDescription && (
-              <div className="mt-1 text-xs text-gray-400">
-                <span className="font-bold text-white">Description:</span> {distilledDOM.metaDescription}
+
+            {noSelection ? (
+              <div className="rounded-lg border-2 border-ink bg-gray-50 p-4 text-center dark:bg-slate-600">
+                <p className="font-bold text-gray-600 dark:text-gray-200">
+                  Please select a message to view past history messages.
+                </p>
+              </div>
+            ) : (
+              <div className="comic-scroll max-h-[420px] overflow-y-auto pr-1 space-y-4">
+                {activeThread?.messages.map((m) => {
+                  const isUser = m.role === "user"
+                  return (
+                    <div key={m.id} className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
+                      <div className="relative max-w-[95%]">
+                        <div
+                          className={[
+                            "absolute top-6 z-10 h-5 w-5 border-b-2 border-ink",
+                            isUser
+                              ? "-right-2 -rotate-45 border-r-2 bg-blue-100 dark:bg-blue-900"
+                              : "-left-2 rotate-45 border-l-2 bg-white dark:bg-slate-700"
+                          ].join(" ")}
+                        />
+
+                        <div
+                          className={[
+                            "relative z-20 rounded-xl border-2 border-ink p-4 shadow-comic",
+                            isUser
+                              ? "bg-blue-100 text-ink dark:bg-blue-900 dark:text-white"
+                              : "bg-white text-ink dark:bg-slate-700 dark:text-white"
+                          ].join(" ")}
+                        >
+                          <p className="whitespace-pre-wrap font-body text-base font-bold leading-snug">
+                            {m.text}
+                          </p>
+                          <div className="mt-2 text-right text-[10px] font-bold text-gray-500 dark:text-gray-300">
+                            {new Date(m.ts).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
-          
-          {/* Summary Stats */}
-          <div className="mb-3 grid grid-cols-3 gap-2 text-center">
-            <div className="rounded bg-blue-900/50 p-2">
-              <div className="text-lg font-bold text-blue-400">{distilledDOM.summary.totalElements}</div>
-              <div className="text-xs text-blue-300">Total</div>
-            </div>
-            <div className="rounded bg-green-900/50 p-2">
-              <div className="text-lg font-bold text-green-400">{distilledDOM.summary.interactiveElements}</div>
-              <div className="text-xs text-green-300">Interactive</div>
-            </div>
-            <div className="rounded bg-yellow-900/50 p-2">
-              <div className="text-lg font-bold text-yellow-400">{distilledDOM.summary.links}</div>
-              <div className="text-xs text-yellow-300">Links</div>
-            </div>
-          </div>
-          
-          <div className="mb-2 grid grid-cols-4 gap-1 text-center text-xs">
-            <div className="rounded bg-gray-800 p-1">
-              <span className="text-gray-400">H:</span> <span className="text-white">{distilledDOM.summary.headings}</span>
-            </div>
-            <div className="rounded bg-gray-800 p-1">
-              <span className="text-gray-400">B:</span> <span className="text-white">{distilledDOM.summary.buttons}</span>
-            </div>
-            <div className="rounded bg-gray-800 p-1">
-              <span className="text-gray-400">I:</span> <span className="text-white">{distilledDOM.summary.inputs}</span>
-            </div>
-            <div className="rounded bg-gray-800 p-1">
-              <span className="text-gray-400">Img:</span> <span className="text-white">{distilledDOM.summary.images}</span>
-            </div>
-          </div>
-
-          {/* Document Flow Info */}
-          <div className="mb-2 text-xs text-gray-400">
-            Elements listed in document flow order (index 0 = first on page)
-          </div>
-
-          {/* JSON Output */}
-          <pre className="max-h-64 overflow-auto rounded bg-gray-950 p-3 text-xs text-green-400">
-            {JSON.stringify(distilledDOM, null, 2)}
-          </pre>
         </div>
       )}
-    </div>
-  </div>
-)
 
+      <div className="h-6" />
+    </div>
+  )
 }
