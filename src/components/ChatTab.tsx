@@ -1,9 +1,11 @@
 // src/components/ChatTab.tsx
 // Chat interface component that integrates with the Conversations API
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { sendConversationMessage, getCurrentPageState } from "~lib/conversation-api"
 import type { ChatMessage, ConversationAction, ChatState } from "~types/conversation"
+
+const HANDS_FREE_SEGMENT_MS = 7000
 
 function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -140,15 +142,24 @@ async function executeActions(actions: ConversationAction[]): Promise<void> {
   }
 }
 
-function AssistantMessage({ message }: { message: ChatMessage }) {
+function AssistantMessage({ message, onSpeak }: { message: ChatMessage; onSpeak: (text: string) => void }) {
   return (
     <div className="flex w-full justify-start">
       <div className="relative max-w-[90%]">
         <div className="absolute -left-2 top-6 z-10 h-5 w-5 rotate-45 border-l-2 border-b-2 border-ink bg-white dark:bg-slate-700" />
         <div className="relative z-20 rounded-xl border-2 border-ink bg-white p-5 text-ink shadow-comic dark:bg-slate-700 dark:text-white">
-          <p className="font-body text-lg font-bold leading-snug">
-            {message.content}
-          </p>
+          <div className="flex items-start gap-3">
+            <p className="font-body text-lg font-bold leading-snug flex-1">
+              {message.content}
+            </p>
+            <button
+              onClick={() => onSpeak(message.content)}
+              className="shrink-0 rounded-full p-1 hover:bg-gray-100 dark:hover:bg-slate-600"
+              title="Read aloud"
+            >
+              <span className="material-icons-outlined text-xl">volume_up</span>
+            </button>
+          </div>
           {message.actions && message.actions.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {message.actions.map((action, idx) => (
@@ -205,15 +216,40 @@ export default function ChatTab() {
     isComplete: false
   })
   const [inputValue, setInputValue] = useState("")
+  const [isRecording, setIsRecording] = useState(false)
+  const [isHandsFree, setIsHandsFree] = useState(false)
+  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false)
+  const [lastSpokenAssistantId, setLastSpokenAssistantId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const handsFreeStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }
+  const clearHandsFreeTimer = useCallback(() => {
+    if (handsFreeStopTimer.current) {
+      clearTimeout(handsFreeStopTimer.current)
+      handsFreeStopTimer.current = null
+    }
+  }, [])
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [chatState.messages])
+  const handleTextToSpeech = useCallback(async (text: string) => {
+    if (!text?.trim()) return
+    const response = await chrome.runtime.sendMessage({ type: "tts-request", text })
+    if (response?.success && response.audioDataUrl) {
+      await new Promise<void>((resolve) => {
+        const audio = new Audio(response.audioDataUrl)
+        audio.onended = () => resolve()
+        audio.onerror = (err) => {
+          console.error("Audio playback error:", err)
+          resolve()
+        }
+        audio.play().catch((err) => {
+          console.error("Audio playback error:", err)
+          resolve()
+        })
+      })
+    } else if (response?.error) {
+      console.error("TTS request failed:", response.error)
+    }
+  }, [])
 
   // Maximum number of agent loop iterations to prevent infinite loops
   const MAX_ITERATIONS = 10
@@ -358,11 +394,54 @@ export default function ChatTab() {
     }
   }
 
-  const handleSendMessage = async () => {
-    const trimmedInput = inputValue.trim()
+  const speakMessage = useCallback((text: string) => {
+    handleTextToSpeech(text).catch((err) => console.error("Text-to-speech failed:", err))
+  }, [handleTextToSpeech])
+
+  const handleStartRecording = useCallback(async () => {
+    if (isRecording || chatState.isProcessing) {
+      return false
+    }
+
+    setIsRecording(true)
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "start-recording" })
+      if (response?.success === false) {
+        setIsRecording(false)
+        return false
+      }
+      return true
+    } catch (error) {
+      console.error("Start recording error:", error)
+      setIsRecording(false)
+      return false
+    }
+  }, [chatState.isProcessing, isRecording])
+
+  const handleStopRecording = useCallback(async () => {
+    if (!isRecording) {
+      return false
+    }
+
+    clearHandsFreeTimer()
+    setIsRecording(false)
+    try {
+      await chrome.runtime.sendMessage({ type: "stop-recording" })
+      return true
+    } catch (error) {
+      console.error("Stop recording error:", error)
+      return false
+    }
+  }, [clearHandsFreeTimer, isRecording])
+
+  const handleSendMessage = useCallback(async (overrideText?: string | React.MouseEvent<HTMLButtonElement>) => {
+    const normalizedOverride = typeof overrideText === "string" ? overrideText : undefined
+    const sourceText = (normalizedOverride ?? inputValue) ?? ""
+    const trimmedInput = sourceText.trim()
     if (!trimmedInput || chatState.isProcessing) return
 
-    // Add user message
+    setInputValue("")
+
     const userMessage: ChatMessage = {
       id: generateId(),
       role: "user",
@@ -376,13 +455,10 @@ export default function ChatTab() {
       isProcessing: true,
       isComplete: false
     }))
-    setInputValue("")
 
     try {
-      // Get current page state (HTML and screenshot)
       const pageData = await getCurrentPageState()
 
-      // Send message to API
       const response = await sendConversationMessage(
         trimmedInput,
         chatState.sessionId,
@@ -392,7 +468,6 @@ export default function ChatTab() {
 
       // Process the response (may recurse for multi-step tasks)
       await processAgentResponse(response, chatState.sessionId, trimmedInput, 0)
-
     } catch (error) {
       console.error("Error in handleSendMessage:", error)
       const errorMessage: ChatMessage = {
@@ -408,23 +483,142 @@ export default function ChatTab() {
         isProcessing: false
       }))
     }
-  }
+  }, [chatState.isProcessing, chatState.sessionId, inputValue])
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
     }
-  }
+  }, [handleSendMessage])
 
-  const handleNewConversation = () => {
+  const handleNewConversation = useCallback(() => {
     setChatState({
       messages: [],
       sessionId: null,
       isProcessing: false,
       isComplete: false
     })
-  }
+    setInputValue("")
+  }, [])
+
+  const handleHandsFreeToggle = useCallback(() => {
+    const next = !isHandsFree
+    setIsHandsFree(next)
+
+    if (next) {
+      const lastAssistant = [...chatState.messages].reverse().find((m) => m.role === "assistant")
+      setLastSpokenAssistantId(lastAssistant?.id ?? null)
+    } else {
+      clearHandsFreeTimer()
+      setIsAssistantSpeaking(false)
+      handleStopRecording()
+    }
+  }, [chatState.messages, clearHandsFreeTimer, handleStopRecording, isHandsFree])
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [])
+
+  useEffect(() => {
+    const handleMessage = (msg: any) => {
+      if (msg.type === "transcription-result") {
+        clearHandsFreeTimer()
+        setIsRecording(false)
+
+        if (msg.error) {
+          console.error("Transcription error:", msg.error)
+          return
+        }
+
+        if (msg.text) {
+          setInputValue(msg.text)
+          if (isHandsFree) {
+            handleSendMessage(msg.text)
+          }
+        }
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(handleMessage)
+    return () => chrome.runtime.onMessage.removeListener(handleMessage)
+  }, [clearHandsFreeTimer, handleSendMessage, isHandsFree])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [scrollToBottom, chatState.messages])
+
+  useEffect(() => {
+    if (!isHandsFree || isRecording || chatState.isProcessing || isAssistantSpeaking) {
+      return
+    }
+
+    let cancelled = false
+
+    const startAsync = async () => {
+      const started = await handleStartRecording()
+      if (!started || cancelled) return
+
+      clearHandsFreeTimer()
+      handsFreeStopTimer.current = setTimeout(() => {
+        handleStopRecording()
+      }, HANDS_FREE_SEGMENT_MS)
+    }
+
+    startAsync()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    chatState.isProcessing,
+    clearHandsFreeTimer,
+    handleStartRecording,
+    handleStopRecording,
+    isAssistantSpeaking,
+    isHandsFree,
+    isRecording
+  ])
+
+  useEffect(() => {
+    if (!isHandsFree || chatState.isProcessing) {
+      return
+    }
+
+    const lastAssistant = [...chatState.messages].reverse().find((m) => m.role === "assistant")
+    if (!lastAssistant || lastAssistant.id === lastSpokenAssistantId) {
+      return
+    }
+
+    let cancelled = false
+    setLastSpokenAssistantId(lastAssistant.id)
+    setIsAssistantSpeaking(true)
+
+    const speakAsync = async () => {
+      try {
+        await handleTextToSpeech(lastAssistant.content)
+      } catch (error) {
+        console.error("Auto TTS error:", error)
+      } finally {
+        if (!cancelled) {
+          setIsAssistantSpeaking(false)
+        }
+      }
+    }
+
+    speakAsync()
+
+    return () => {
+      cancelled = true
+      setIsAssistantSpeaking(false)
+    }
+  }, [
+    chatState.messages,
+    chatState.isProcessing,
+    handleTextToSpeech,
+    isHandsFree,
+    lastSpokenAssistantId
+  ])
 
   return (
     <>
@@ -453,7 +647,7 @@ export default function ChatTab() {
           message.role === "user" ? (
             <UserMessage key={message.id} message={message} />
           ) : (
-            <AssistantMessage key={message.id} message={message} />
+            <AssistantMessage key={message.id} message={message} onSpeak={speakMessage} />
           )
         ))}
 
@@ -481,6 +675,24 @@ export default function ChatTab() {
       {/* Footer input */}
       <div className="relative z-20 shrink-0 border-t-4 border-ink bg-gray-100 p-4 dark:bg-slate-900">
         <div className="flex items-end gap-3">
+          <button
+            onClick={handleHandsFreeToggle}
+            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 border-ink shadow-comic transition-colors ${isHandsFree ? 'bg-yellow-300 text-ink animate-pulse' : 'bg-white text-ink dark:bg-slate-800 dark:text-white'}`}
+            title={isHandsFree ? "Disable hands-free conversation" : "Enable hands-free conversation"}
+          >
+            <span className="material-icons-outlined text-2xl">
+              {isHandsFree ? 'hearing' : 'hearing_disabled'}
+            </span>
+          </button>
+          <button
+            onClick={isRecording ? handleStopRecording : handleStartRecording}
+            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 border-ink shadow-comic ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-white dark:bg-slate-800'}`}
+            title={isRecording ? "Stop recording" : "Record voice"}
+          >
+            <span className="material-icons-outlined text-2xl">
+              {isRecording ? 'stop' : 'mic'}
+            </span>
+          </button>
           <div className="flex h-14 flex-1 items-center rounded-xl border-2 border-ink bg-white shadow-comic transition-all focus-within:translate-x-[2px] focus-within:translate-y-[2px] focus-within:shadow-comic-hover dark:bg-slate-800">
             <input
               className="h-full w-full border-none bg-transparent p-4 text-lg font-bold text-ink placeholder-gray-400 focus:outline-none focus:ring-0 dark:text-white"
@@ -503,6 +715,12 @@ export default function ChatTab() {
             </span>
           </button>
         </div>
+
+        {isHandsFree && (
+          <p className="mt-2 text-center text-sm font-bold text-ink dark:text-white">
+            Hands-free mode active. Speak when the mic indicator glows.
+          </p>
+        )}
 
         <div className="mt-3 text-center">
           <p className="font-display text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">
