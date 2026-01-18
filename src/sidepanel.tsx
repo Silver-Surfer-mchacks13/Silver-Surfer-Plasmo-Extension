@@ -29,7 +29,7 @@ export default function SidePanel() {
       }
       setIsLoading(false)
     })
-    
+
     // Load dark mode preference
     chrome.storage.local.get("darkMode", (res) => {
       if (res.darkMode !== undefined) {
@@ -161,11 +161,10 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("chat")}
-                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
-                  tab === "chat"
+                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${tab === "chat"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-primary text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                }`}>
+                  }`}>
                 <span className="font-display flex items-center justify-center gap-1 tracking-wide">
                   <span className="material-icons-outlined text-base">
                     chat_bubble
@@ -178,11 +177,10 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("simplify")}
-                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
-                  tab === "simplify"
+                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${tab === "simplify"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-purple-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                }`}>
+                  }`}>
                 <span className="font-display flex items-center justify-center gap-1 tracking-wide">
                   <span className="material-icons-outlined text-base">
                     auto_fix_high
@@ -195,11 +193,10 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("history")}
-                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
-                  tab === "history"
+                className={`w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${tab === "history"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-orange-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                }`}>
+                  }`}>
                 <span className="font-display flex items-center justify-center gap-1 tracking-wide">
                   <span className="material-icons-outlined text-base">
                     science
@@ -212,11 +209,10 @@ export default function SidePanel() {
             <div className="relative flex-1">
               <button
                 onClick={() => setTab("settings")}
-                className={`mr-1 w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${
-                  tab === "settings"
+                className={`mr-1 w-full rounded-t-lg py-2 px-1 text-sm font-bold transition-colors ${tab === "settings"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-blue-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                }`}>
+                  }`}>
                 <span className="font-display flex items-center justify-center gap-1 tracking-wide">
                   <span className="material-icons-outlined text-base">
                     settings
@@ -232,7 +228,7 @@ export default function SidePanel() {
         {tab === "settings" ? (
           <SettingsTab />
         ) : tab === "history" ? (
-          <TestTab />
+          <TestTab onLoadInChat={() => setTab("chat")} />
         ) : tab === "simplify" ? (
           <SimplifyTab />
         ) : (

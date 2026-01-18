@@ -2,8 +2,12 @@
 // Chat interface component that integrates with the Conversations API
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { sendConversationMessage, getCurrentPageState } from "~lib/conversation-api"
-import type { ChatMessage, ConversationAction, ChatState } from "~types/conversation"
+import { sendConversationMessage, getCurrentPageState, getConversation } from "~lib/conversation-api"
+import type { ChatMessage, ConversationAction, ChatState, ConversationMessage } from "~types/conversation"
+
+const PENDING_SESSION_KEY = "pending_session_id"
+const START_NEW_CONVERSATION_KEY = "start_new_conversation"
+const ACTIVE_CHAT_SESSION_KEY = "active_chat_session_id"
 
 const HANDS_FREE_SEGMENT_MS = 7000
 
@@ -215,6 +219,7 @@ export default function ChatTab() {
     isProcessing: false,
     isComplete: false
   })
+  const [conversationTitle, setConversationTitle] = useState<string | null>(null)
   const [inputValue, setInputValue] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const [isHandsFree, setIsHandsFree] = useState(false)
@@ -281,7 +286,12 @@ export default function ChatTab() {
       return
     }
 
-    const { session_id, actions, complete, needs_observation } = response.data
+    const { session_id, actions, complete, needs_observation, title } = response.data
+
+    // Update conversation title if provided
+    if (title && typeof title === "string") {
+      setConversationTitle(title)
+    }
 
     // Extract messages from actions
     const messageActions = actions.filter(
@@ -322,6 +332,10 @@ export default function ChatTab() {
         messages: [...prev.messages, ...assistantMessages],
         sessionId: session_id
       }))
+      // Update active session in storage for History tab to check
+      if (session_id) {
+        chrome.storage.local.set({ [ACTIVE_CHAT_SESSION_KEY]: session_id })
+      }
     }
 
     // Execute page actions
@@ -499,7 +513,10 @@ export default function ChatTab() {
       isProcessing: false,
       isComplete: false
     })
+    setConversationTitle(null)
     setInputValue("")
+    // Clear active session in storage
+    chrome.storage.local.remove([ACTIVE_CHAT_SESSION_KEY])
   }, [])
 
   const handleHandsFreeToggle = useCallback(() => {
@@ -547,6 +564,90 @@ export default function ChatTab() {
   useEffect(() => {
     scrollToBottom()
   }, [scrollToBottom, chatState.messages])
+
+  // Load conversation from history if pending sessionId exists
+  const loadPendingConversation = useCallback(async () => {
+    try {
+      const result = await chrome.storage.local.get([PENDING_SESSION_KEY])
+      const pendingSessionId = result[PENDING_SESSION_KEY]
+
+      if (pendingSessionId && typeof pendingSessionId === "string") {
+        // Only load if we don't already have messages or a sessionId (avoid overwriting active conversation)
+        if (chatState.messages.length === 0 && chatState.sessionId === null) {
+          // Clear the pending sessionId before loading to prevent race conditions
+          await chrome.storage.local.remove([PENDING_SESSION_KEY])
+
+          const conversationResult = await getConversation(pendingSessionId)
+
+          if (conversationResult.success && conversationResult.data) {
+            // Map API messages to ChatMessage format
+            const loadedMessages: ChatMessage[] = conversationResult.data.messages.map((msg: ConversationMessage) => ({
+              id: msg.id,
+              role: msg.role as ChatMessage["role"],
+              content: msg.content,
+              timestamp: new Date(msg.CreatedAt),
+              actions: undefined // API messages don't include actions, they're stored separately
+            }))
+
+            setChatState({
+              messages: loadedMessages,
+              sessionId: pendingSessionId,
+              isProcessing: false,
+              isComplete: conversationResult.data.CompletedAt !== null
+            })
+            setConversationTitle(conversationResult.data.Title || null)
+            // Update active session in storage for History tab to check
+            if (pendingSessionId) {
+              chrome.storage.local.set({ [ACTIVE_CHAT_SESSION_KEY]: pendingSessionId })
+            }
+          }
+        } else {
+          // If we have an active conversation, just clear the pending sessionId
+          await chrome.storage.local.remove([PENDING_SESSION_KEY])
+        }
+      }
+    } catch (error) {
+      console.error("Error loading pending conversation:", error)
+    }
+  }, [chatState.messages.length, chatState.sessionId])
+
+  useEffect(() => {
+    loadPendingConversation()
+  }, [loadPendingConversation])
+
+  // Also listen for storage changes (when History tab saves pending sessionId or requests new conversation)
+  useEffect(() => {
+    const handleStorageChange = async (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string
+    ) => {
+      if (areaName === "local") {
+        // Handle new conversation request
+        if (changes[START_NEW_CONVERSATION_KEY]) {
+          const shouldStartNew = changes[START_NEW_CONVERSATION_KEY].newValue
+          if (shouldStartNew === true) {
+            // Clear the flag
+            await chrome.storage.local.remove([START_NEW_CONVERSATION_KEY])
+            // Only start new if we have an active conversation
+            if (chatState.messages.length > 0 || chatState.sessionId !== null) {
+              handleNewConversation()
+            }
+          }
+        }
+
+        // Handle pending sessionId (load conversation from history)
+        if (changes[PENDING_SESSION_KEY]) {
+          // Only load if we don't have messages or a sessionId (avoid overwriting active conversation)
+          if (chatState.messages.length === 0 && chatState.sessionId === null) {
+            loadPendingConversation()
+          }
+        }
+      }
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChange)
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange)
+  }, [chatState.messages.length, chatState.sessionId, loadPendingConversation, handleNewConversation])
 
   useEffect(() => {
     if (!isHandsFree || isRecording || chatState.isProcessing || isAssistantSpeaking) {
@@ -624,6 +725,14 @@ export default function ChatTab() {
     <>
       {/* Chat messages area */}
       <div className="comic-scroll bg-dots flex-1 space-y-6 overflow-y-auto border-t-4 border-ink bg-white bg-halftone-light p-4 dark:bg-slate-800 dark:bg-halftone-dark">
+        {/* Conversation title */}
+        {conversationTitle && (
+          <div className="mb-4 pb-3 border-b-2 border-ink dark:border-white">
+            <h2 className="font-body text-lg font-bold text-ink dark:text-white">
+              {conversationTitle}
+            </h2>
+          </div>
+        )}
         {/* Welcome message if no messages */}
         {chatState.messages.length === 0 && (
           <div className="flex w-full justify-start">

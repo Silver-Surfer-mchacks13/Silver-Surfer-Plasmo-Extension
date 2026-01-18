@@ -1,7 +1,7 @@
 import { API_BASE_URL } from "~lib/constants"
 import { getAuthState, login, logout } from "~lib/auth-service"
 
-export {}
+export { }
 
 console.log("Silver Surfer Background Service Worker Loaded")
 
@@ -63,30 +63,30 @@ async function createOffscreenDocument() {
     console.log('BG: Offscreen already marked as created');
     return;
   }
-  
+
   try {
     const existingContexts = await chrome.runtime.getContexts({})
     console.log('BG: Existing contexts:', existingContexts.map(c => ({ type: c.contextType, url: c.documentUrl })));
     const hasOffscreen = existingContexts.some(c => c.contextType === 'OFFSCREEN_DOCUMENT')
-    
+
     if (hasOffscreen) {
       console.log('BG: Offscreen document already exists');
       offscreenCreated = true
       return
     }
-    
+
     const url = chrome.runtime.getURL('offscreen.html');
     console.log('BG: Creating new offscreen document at URL:', url);
-    
+
     await chrome.offscreen.createDocument({
       url: url,
       reasons: ['USER_MEDIA' as chrome.offscreen.Reason],
       justification: 'Recording audio for speech-to-text'
     })
-    
+
     console.log('BG: Offscreen document created successfully');
     offscreenCreated = true
-    
+
     // Verify it was created
     const afterContexts = await chrome.runtime.getContexts({})
     console.log('BG: Contexts after creation:', afterContexts.map(c => ({ type: c.contextType, url: c.documentUrl })));
@@ -132,11 +132,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: request.text })
         })
-        
+
         if (!response.ok) throw new Error('TTS failed')
-        
+
         const audioBlob = await response.blob()
-        
+
         // Convert blob to base64 data URL for cross-context use
         const reader = new FileReader()
         reader.onloadend = () => {
@@ -210,11 +210,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const audioResponse = await fetch(request.audioData)
         const audioBlob = await audioResponse.blob()
         console.log('BG: Audio blob size:', audioBlob.size);
-        
+
         // Send to STT API
         const formData = new FormData()
         formData.append('audio', audioBlob, 'recording.webm')
-        
+
         console.log('BG: Sending to STT API...');
         const sttResponse = await fetch(STT_URL, {
           method: 'POST',
@@ -245,7 +245,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         console.log('BG: STT raw response:', parsedResponse ?? responseText)
         console.log('BG: Transcription result:', resolvedText)
-        
+
         // Send transcription to sidepanel with raw payload for debugging
         chrome.runtime.sendMessage({
           type: 'transcription-result',
@@ -377,30 +377,67 @@ async function handleGetHtml() {
       return { success: false, error: "No active tab found" }
     }
 
-    // Send message to content script to get distilled DOM (structured page content)
-    const response = await chrome.tabs.sendMessage(tab.id, {
-      action: "DISTILL_DOM"
-    })
+    // Check if URL allows content scripts (chrome://, about:, etc. don't)
+    const url = tab.url || ""
+    if (url.startsWith("chrome://") || url.startsWith("chrome-extension://") ||
+      url.startsWith("moz-extension://") || url.startsWith("about:") ||
+      url.startsWith("edge://")) {
+      console.warn("Content scripts not available on this page type:", url)
+      return { success: true, data: { distilledDOM: null, url: tab.url } }
+    }
+
+    // Try to send message to content script
+    let response
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, {
+        action: "DISTILL_DOM"
+      })
+    } catch (sendError) {
+      // If sendMessage throws, content script likely not loaded
+      console.warn("Content script not loaded, returning null for distilledDOM:", sendError)
+      return { success: true, data: { distilledDOM: null, url: tab.url } }
+    }
+
+    // Check for runtime errors (content script not available)
+    if (chrome.runtime.lastError) {
+      const errorMsg = chrome.runtime.lastError.message
+      if (errorMsg?.includes("Receiving end does not exist") ||
+        errorMsg?.includes("Could not establish connection")) {
+        console.warn("Content script not available on this page, returning null for distilledDOM")
+        return { success: true, data: { distilledDOM: null, url: tab.url } }
+      }
+      console.error("Error sending message to content script:", errorMsg)
+      return { success: false, error: errorMsg || "Failed to communicate with content script" }
+    }
 
     if (response?.success && response?.data) {
       capturedData.html = JSON.stringify(response.data) // Store as JSON string
       capturedData.url = tab.url || null
       capturedData.timestamp = Date.now()
+      console.log("Successfully captured distilled DOM:", { elementCount: response.data?.elements?.length || 0 })
       return { success: true, data: { distilledDOM: response.data, url: tab.url } }
     }
 
+    console.error("DOM distillation failed:", response?.message || "Unknown error", response)
     return { success: false, error: response?.message || "DOM distillation failed" }
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "DOM distillation failed"
-    }
+    console.error("Exception in handleGetHtml:", error)
+    // Return success with null distilledDOM instead of failing completely
+    // This allows the request to proceed without distilledDOM
+    return { success: true, data: { distilledDOM: null, url: null } }
   }
 }
 
 async function handleCaptureAll() {
   const screenshotResult = await handleScreenshotCapture()
   const domResult = await handleGetHtml()
+
+  console.log("handleCaptureAll results:", {
+    screenshotSuccess: screenshotResult.success,
+    domSuccess: domResult.success,
+    hasDistilledDOM: !!domResult.data?.distilledDOM,
+    distilledDOMType: typeof domResult.data?.distilledDOM
+  })
 
   return {
     success: true,
@@ -415,18 +452,42 @@ async function handleCaptureAll() {
 
 async function handleApiRequest(request: any) {
   const { endpoint, method = "GET", body, headers = {} } = request
-  
+
   // Construct full URL
   // Ensure endpoint starts with / if not present, but avoid double //
   const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`
   const url = `${API_BASE_URL}${cleanEndpoint}`
 
+  // Get backend access token from storage and add as Bearer token
+  // Only add if Authorization header is not already provided
+  const requestHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...headers
+  }
+
+  // Add JWT Bearer token if not already provided and token exists
+  if (!requestHeaders.Authorization && !requestHeaders.authorization) {
+    try {
+      const storage = await chrome.storage.local.get([
+        "backend_access_token",
+        "backend_access_token_expires_at"
+      ])
+
+      const backendAccessToken = storage.backend_access_token
+      const expiresAt = storage.backend_access_token_expires_at
+
+      // Only add token if it exists and is not expired
+      if (backendAccessToken && expiresAt && Date.now() < expiresAt) {
+        requestHeaders.Authorization = `Bearer ${backendAccessToken}`
+      }
+    } catch (e) {
+      console.error("Failed to retrieve backend access token:", e)
+    }
+  }
+
   const options: RequestInit = {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      ...headers
-    }
+    headers: requestHeaders
   }
 
   if (body) {
@@ -435,7 +496,7 @@ async function handleApiRequest(request: any) {
 
   try {
     const response = await fetch(url, options)
-    
+
     // Parse JSON if possible
     const contentType = response.headers.get("content-type")
     let data

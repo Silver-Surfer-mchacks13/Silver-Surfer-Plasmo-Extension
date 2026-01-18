@@ -178,3 +178,27 @@ export interface ChatState {
   isProcessing: boolean
   isComplete: boolean
 }
+
+// Conversation History API types
+export interface ConversationSummary {
+  id: string
+  UserId: string | null
+  Title: string
+  CreatedAt: string
+  UpdatedAt: string
+  CompletedAt: string | null
+}
+
+export interface ConversationMessage {
+  id: string
+  SessionId: string
+  UserId: string | null
+  role: "user" | "assistant"
+  content: string
+  PageUrl: string | null
+  CreatedAt: string
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[]
+}

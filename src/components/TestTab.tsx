@@ -1,213 +1,133 @@
 // src/components/TestTab.tsx  (History / Past Chats)
 import { useEffect, useMemo, useState } from "react"
+import { getConversations } from "~lib/conversation-api"
+import type { ConversationSummary } from "~types/conversation"
 
-type ChatMessage = {
-  id: string
-  role: "user" | "assistant"
-  text: string
-  ts: number
-}
+const PENDING_SESSION_KEY = "pending_session_id"
+const START_NEW_CONVERSATION_KEY = "start_new_conversation"
+const ACTIVE_CHAT_SESSION_KEY = "active_chat_session_id"
 
-type ChatThread = {
-  id: string
-  title: string
-  updatedAt: number
-  messages: ChatMessage[]
-}
-
-const STORAGE_KEY = "silver_chat_threads"
-const ACTIVE_KEY = "silver_chat_active_thread"
-
-/* ------------------ storage helpers ------------------ */
-async function loadThreads(): Promise<ChatThread[]> {
+// Helper to save sessionId for Chat tab to load
+async function savePendingSessionId(sessionId: string | null) {
   try {
-    const res = await chrome.storage.local.get([STORAGE_KEY])
-    return Array.isArray(res[STORAGE_KEY]) ? (res[STORAGE_KEY] as ChatThread[]) : []
-  } catch {
-    return []
-  }
-}
-
-async function saveThreads(threads: ChatThread[]) {
-  try {
-    await chrome.storage.local.set({ [STORAGE_KEY]: threads })
+    if (sessionId) {
+      await chrome.storage.local.set({ [PENDING_SESSION_KEY]: sessionId })
+    } else {
+      await chrome.storage.local.remove([PENDING_SESSION_KEY])
+    }
   } catch {
     // ignore
   }
 }
 
-async function loadActiveThreadId(): Promise<string | null> {
+// Helper to check if there's an active conversation in Chat tab
+async function hasActiveChatConversation(): Promise<boolean> {
   try {
-    const res = await chrome.storage.local.get([ACTIVE_KEY])
-    return typeof res[ACTIVE_KEY] === "string" ? (res[ACTIVE_KEY] as string) : null
+    const result = await chrome.storage.local.get([ACTIVE_CHAT_SESSION_KEY])
+    return result[ACTIVE_CHAT_SESSION_KEY] !== undefined && result[ACTIVE_CHAT_SESSION_KEY] !== null
   } catch {
-    return null
+    return false
   }
 }
 
-async function saveActiveThreadId(id: string) {
+// Helper to request a new conversation in Chat tab
+async function requestNewConversation() {
   try {
-    await chrome.storage.local.set({ [ACTIVE_KEY]: id })
+    await chrome.storage.local.set({ [START_NEW_CONVERSATION_KEY]: true })
   } catch {
     // ignore
   }
-}
-
-/* ------------------ demo seeding (manual only) ------------------ */
-function uid(prefix = "id") {
-  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`
-}
-
-function makeThread(
-  title: string,
-  baseTs: number,
-  lines: Array<[ChatMessage["role"], string]>
-): ChatThread {
-  const messages: ChatMessage[] = lines.map(([role, text], i) => ({
-    id: uid("msg"),
-    role,
-    text,
-    ts: baseTs + i * 60_000
-  }))
-
-  return {
-    id: uid("thread"),
-    title,
-    updatedAt: messages[messages.length - 1]?.ts ?? baseTs,
-    messages
-  }
-}
-
-function buildDemoThreads(): ChatThread[] {
-  const now = Date.now()
-
-  const t1 = makeThread("Make this page readable", now - 1000 * 60 * 60 * 18, [
-    ["assistant", "Greetings, Traveler! I’m your Silver Assistant. What do you need?"],
-    ["user", "Text is tiny. Make it bigger please."],
-    ["assistant", "Boosted by 20% ✅ Want more or reset?"],
-    ["user", "Highlight the headline too."],
-    ["assistant", "Highlighted `h1` ✅"],
-    ["user", "Remove clutter (ads/popups)."],
-    ["assistant", "Clutter removed ✅. I can restore if needed."]
-  ])
-
-  const t2 = makeThread("Checkout help", now - 1000 * 60 * 60 * 6, [
-    ["user", "I’m stuck on checkout."],
-    ["assistant", "Scrolling to form ✅"],
-    ["user", "It wants a phone number."],
-    ["assistant", "Send it and I’ll fill it."],
-    ["user", "5141234567"],
-    ["assistant", "Filled ✅ Click submit?"],
-    ["user", "Yes"],
-    ["assistant", "Clicked ✅"]
-  ])
-
-  const lines: Array<[ChatMessage["role"], string]> = [
-    ["assistant", "Scroll test time 😄"],
-    ["user", "Make it long please."],
-    ["assistant", "Done. This thread is just for scrollbar testing."]
-  ]
-  for (let i = 1; i <= 25; i++) {
-    lines.push(["user", `Dummy message #${i} — keep comic UI consistent.`])
-    lines.push(["assistant", `Reply #${i} — borders, shadows, bubbles ✅`])
-  }
-  const t3 = makeThread("Scrollbar Stress Test", now - 1000 * 60 * 60 * 2, lines)
-
-  return [t1, t2, t3].sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 /* ------------------ component ------------------ */
-export default function TestTab() {
-  const [threads, setThreads] = useState<ChatThread[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+interface TestTabProps {
+  onLoadInChat?: () => void
+}
+
+export default function TestTab({ onLoadInChat }: TestTabProps) {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [isLoading, setIsLoading] = useState(true)
-
-  // Clear UI state
-  const [clearOpen, setClearOpen] = useState(false)
-  const [selectedToClear, setSelectedToClear] = useState<Record<string, boolean>>({})
-
-  const activeThread = useMemo(
-    () => threads.find((t) => t.id === activeId) ?? null,
-    [threads, activeId]
-  )
+  const [error, setError] = useState<string | null>(null)
+  const [hasActiveChat, setHasActiveChat] = useState(false)
 
   const refresh = async () => {
     setIsLoading(true)
+    setError(null)
 
-    const loaded = await loadThreads()
-    const sorted = loaded.sort((a, b) => b.updatedAt - a.updatedAt)
+    const result = await getConversations()
 
-    const savedActive = await loadActiveThreadId()
-    const fallbackActive =
-      savedActive && sorted.some((t) => t.id === savedActive) ? savedActive : null
+    if (!result.success) {
+      setError(result.error || "Failed to load conversations")
+      setIsLoading(false)
+      return
+    }
 
-    setThreads(sorted)
-    setActiveId(fallbackActive)
+    const sorted = (result.data || []).sort((a, b) => {
+      return new Date(b.UpdatedAt).getTime() - new Date(a.UpdatedAt).getTime()
+    })
 
-    // Sync selection map with threads
-    const map: Record<string, boolean> = {}
-    for (const t of sorted) map[t.id] = false
-    setSelectedToClear(map)
-
+    setConversations(sorted)
     setIsLoading(false)
   }
 
-  const seedDemo = async () => {
-    const demo = buildDemoThreads()
-    await saveThreads(demo)
-    await saveActiveThreadId(demo[0]?.id ?? "")
-    await refresh()
-  }
-
-  const openClearDialog = () => {
-    const map: Record<string, boolean> = {}
-    for (const t of threads) map[t.id] = false
-    setSelectedToClear(map)
-    setClearOpen(true)
-  }
-
-  const selectAll = (val: boolean) => {
-    const next: Record<string, boolean> = {}
-    for (const t of threads) next[t.id] = val
-    setSelectedToClear(next)
-  }
-
-  const confirmClearSelected = async () => {
-    const ids = Object.entries(selectedToClear)
-      .filter(([, v]) => v)
-      .map(([k]) => k)
-
-    // If nothing selected, don't clear; keep dialog open
-    if (ids.length === 0) return
-
-    const remaining = threads.filter((t) => !ids.includes(t.id))
-    await saveThreads(remaining)
-
-    const nextActive = remaining.some((t) => t.id === activeId) ? activeId : null
-    await saveActiveThreadId(nextActive ?? "")
-
-    setClearOpen(false)
-    await refresh()
+  const handleConversationClick = async (sessionId: string) => {
+    // Save sessionId for Chat tab to load
+    await savePendingSessionId(sessionId)
+    // Switch to Chat tab if callback provided
+    if (onLoadInChat) {
+      onLoadInChat()
+    }
   }
 
   useEffect(() => {
     refresh()
 
-    const onChanged = (
+    // Check if there's an active conversation in Chat tab
+    const checkActiveChat = async () => {
+      const hasActive = await hasActiveChatConversation()
+      setHasActiveChat(hasActive)
+    }
+    checkActiveChat()
+
+    // Listen for changes to active chat session
+    const handleStorageChange = (
       changes: Record<string, chrome.storage.StorageChange>,
-      area: string
+      areaName: string
     ) => {
-      if (area !== "local") return
-      if (changes[STORAGE_KEY] || changes[ACTIVE_KEY]) refresh()
+      if (areaName === "local" && changes[ACTIVE_CHAT_SESSION_KEY]) {
+        const hasActive = changes[ACTIVE_CHAT_SESSION_KEY].newValue !== undefined &&
+          changes[ACTIVE_CHAT_SESSION_KEY].newValue !== null
+        setHasActiveChat(hasActive)
+      }
     }
 
-    chrome.storage.onChanged.addListener(onChanged)
-    return () => chrome.storage.onChanged.removeListener(onChanged)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    chrome.storage.onChanged.addListener(handleStorageChange)
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange)
   }, [])
 
-  const noThreads = !isLoading && threads.length === 0
-  const noSelection = !isLoading && threads.length > 0 && !activeThread
+  const handleNewConversation = async () => {
+    if (!hasActiveChat) {
+      return // Do nothing if there's no active conversation
+    }
+    await requestNewConversation()
+    if (onLoadInChat) {
+      onLoadInChat()
+    }
+  }
+
+  const noConversations = !isLoading && conversations.length === 0
+
+  // Format date for display
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString)
+    return date.toLocaleString()
+  }
+
+  // Get preview text from conversation (last message or title)
+  const getPreview = (conv: ConversationSummary) => {
+    // We don't have message preview in summary, so use title
+    return conv.Title
+  }
 
   return (
     <div className="comic-scroll bg-dots flex-1 overflow-y-auto border-t-4 border-ink bg-white bg-halftone-light p-4 dark:bg-slate-800 dark:bg-halftone-dark">
@@ -218,234 +138,88 @@ export default function TestTab() {
             Chat History
           </h3>
           <p className="text-xs font-bold text-gray-600 dark:text-gray-300">
-            Click a thread to view its messages
+            Click a conversation to continue it in Chat
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
+            onClick={handleNewConversation}
+            disabled={!hasActiveChat}
+            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-green-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover disabled:opacity-50 disabled:cursor-not-allowed dark:bg-green-900 dark:text-white">
+            <span className="material-icons-outlined text-lg">add_circle</span>
+            <span className="text-sm">New Conversation</span>
+          </button>
+          <button
             onClick={refresh}
-            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-gray-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
+            disabled={isLoading}
+            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-gray-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover disabled:opacity-50 disabled:cursor-not-allowed dark:bg-slate-600 dark:text-white">
             <span className="material-icons-outlined text-lg">refresh</span>
             <span className="text-sm">Refresh</span>
-          </button>
-
-          <button
-            onClick={seedDemo}
-            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-yellow-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-yellow-900/40 dark:text-white">
-            <span className="material-icons-outlined text-lg">auto_fix_high</span>
-            <span className="text-sm">Seed Demo</span>
-          </button>
-
-          <button
-            onClick={openClearDialog}
-            disabled={threads.length === 0}
-            className={[
-              "flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink px-3 font-bold shadow-comic transition-all",
-              "hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover",
-              "bg-red-100 text-ink dark:bg-red-900/40 dark:text-white",
-              "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-x-0 disabled:hover:translate-y-0"
-            ].join(" ")}>
-            <span className="material-icons-outlined text-lg">delete</span>
-            <span className="text-sm">Clear</span>
           </button>
         </div>
       </div>
 
-      {/* Clear modal (checkbox selection) */}
-      {clearOpen && (
-        <div className="mb-4 rounded-lg border-2 border-ink bg-white p-4 shadow-comic dark:bg-slate-700">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h4 className="font-display text-lg uppercase tracking-wider text-ink dark:text-white">
-                Clear chats
-              </h4>
-              <p className="text-xs font-bold text-gray-600 dark:text-gray-300">
-                Select which threads to delete (or select all).
-              </p>
-            </div>
-
-            <button
-              onClick={() => setClearOpen(false)}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-ink bg-gray-100 text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white"
-              aria-label="Close clear dialog">
-              <span className="material-icons-outlined">close</span>
-            </button>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              onClick={() => selectAll(true)}
-              className="rounded-lg border-2 border-ink bg-blue-100 px-3 py-2 text-xs font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-blue-900/40 dark:text-white">
-              Select all
-            </button>
-            <button
-              onClick={() => selectAll(false)}
-              className="rounded-lg border-2 border-ink bg-gray-100 px-3 py-2 text-xs font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
-              Select none
-            </button>
-          </div>
-
-          <div className="mt-4 max-h-48 overflow-y-auto pr-1 comic-scroll space-y-2">
-            {threads.map((t) => (
-              <label
-                key={t.id}
-                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border-2 border-ink bg-gray-50 p-3 shadow-comic dark:bg-slate-600">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-ink dark:text-white">
-                    {t.title}
-                  </p>
-                  <p className="line-clamp-2 text-xs font-bold text-gray-600 dark:text-gray-200">
-                    {t.messages[t.messages.length - 1]?.text ?? ""}
-                  </p>
-                </div>
-
-                <input
-                  type="checkbox"
-                  className="h-5 w-5 accent-blue-600"
-                  checked={!!selectedToClear[t.id]}
-                  onChange={(e) =>
-                    setSelectedToClear((prev) => ({ ...prev, [t.id]: e.target.checked }))
-                  }
-                />
-              </label>
-            ))}
-          </div>
-
-          {/* Message when none selected */}
-          {Object.values(selectedToClear).every((v) => !v) && (
-            <p className="mt-3 text-center text-xs font-bold text-gray-600 dark:text-gray-300">
-              Please select a chat to clear.
-            </p>
-          )}
-
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={() => setClearOpen(false)}
-              className="flex-1 rounded-lg border-2 border-ink bg-gray-100 px-3 py-3 text-sm font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
-              Cancel
-            </button>
-
-            <button
-              onClick={confirmClearSelected}
-              className="flex-1 rounded-lg border-2 border-ink bg-red-200 px-3 py-3 text-sm font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-red-900/40 dark:text-white">
-              Clear selected
-            </button>
-          </div>
+      {/* Error message */}
+      {error && (
+        <div className="mb-4 rounded-lg border-2 border-ink bg-red-100 p-3 shadow-comic dark:bg-red-900/40">
+          <p className="font-bold text-red-800 dark:text-red-200">{error}</p>
         </div>
       )}
 
       {/* Loading / empty / main */}
       {isLoading ? (
         <div className="rounded-lg border-2 border-ink bg-white p-4 text-center shadow-comic dark:bg-slate-700">
-          <p className="font-bold text-gray-600 dark:text-gray-300">Loading…</p>
+          <p className="font-bold text-gray-600 dark:text-gray-300">Loading conversations…</p>
         </div>
-      ) : noThreads ? (
+      ) : noConversations ? (
         <div className="rounded-lg border-2 border-ink bg-white p-4 text-center shadow-comic dark:bg-slate-700">
           <p className="font-bold text-gray-600 dark:text-gray-300">
             No history yet — send a message in Chat!
           </p>
         </div>
       ) : (
-        <div className="grid gap-4">
-          {/* Thread list (scrollable) */}
-          <div className="rounded-lg border-2 border-ink bg-white p-3 shadow-comic dark:bg-slate-700">
-            <h4 className="mb-2 font-display text-lg uppercase tracking-wider text-ink dark:text-white">
-              Threads
-            </h4>
+        <div className="rounded-lg border-2 border-ink bg-white p-3 shadow-comic dark:bg-slate-700">
+          <h4 className="mb-2 font-display text-lg uppercase tracking-wider text-ink dark:text-white">
+            Conversations
+          </h4>
 
-            <div className="comic-scroll max-h-56 overflow-y-auto pr-1 space-y-2">
-              {threads.map((t) => {
-                const active = t.id === activeId
-                const preview = t.messages[t.messages.length - 1]?.text ?? ""
+          <div className="comic-scroll max-h-[600px] overflow-y-auto pr-1 space-y-2">
+            {conversations.map((conv) => {
+              const preview = getPreview(conv)
+              const isCompleted = conv.CompletedAt !== null
 
-                return (
-                  <button
-                    key={t.id}
-                    onClick={async () => {
-                      setActiveId(t.id)
-                      await saveActiveThreadId(t.id)
-                    }}
-                    className={[
-                      "w-full rounded-lg border-2 border-ink p-3 text-left shadow-comic transition-all",
-                      "hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover",
-                      active ? "bg-blue-100 dark:bg-blue-900" : "bg-gray-50 dark:bg-slate-600"
-                    ].join(" ")}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="material-icons-outlined text-lg">history</span>
-                          <p className="truncate font-bold text-ink dark:text-white">{t.title}</p>
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-xs font-bold text-gray-600 dark:text-gray-200">
-                          {preview}
-                        </p>
+              return (
+                <button
+                  key={conv.id}
+                  onClick={() => handleConversationClick(conv.id)}
+                  className={[
+                    "w-full rounded-lg border-2 border-ink p-3 text-left shadow-comic transition-all",
+                    "hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover",
+                    "bg-gray-50 dark:bg-slate-600"
+                  ].join(" ")}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="material-icons-outlined text-lg">history</span>
+                        <p className="truncate font-bold text-ink dark:text-white">{conv.Title}</p>
+                        {isCompleted && (
+                          <span className="shrink-0 rounded border border-ink bg-green-100 px-1 text-[10px] font-bold text-ink dark:bg-green-900/40 dark:text-white">
+                            Done
+                          </span>
+                        )}
                       </div>
-
-                      <div className="shrink-0 text-[10px] font-bold text-gray-500 dark:text-gray-200">
-                        {new Date(t.updatedAt).toLocaleString()}
-                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs font-bold text-gray-600 dark:text-gray-200">
+                        {preview}
+                      </p>
+                      <p className="mt-1 text-[10px] font-bold text-gray-500 dark:text-gray-300">
+                        Updated: {formatDate(conv.UpdatedAt)}
+                      </p>
                     </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Messages */}
-          <div className="rounded-lg border-2 border-ink bg-white p-3 shadow-comic dark:bg-slate-700">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h4 className="font-display text-lg uppercase tracking-wider text-ink dark:text-white">
-                {activeThread ? activeThread.title : "History"}
-              </h4>
-              <div className="text-xs font-bold text-gray-600 dark:text-gray-200">
-                {activeThread ? `${activeThread.messages.length} messages` : ""}
-              </div>
-            </div>
-
-            {noSelection ? (
-              <div className="rounded-lg border-2 border-ink bg-gray-50 p-4 text-center dark:bg-slate-600">
-                <p className="font-bold text-gray-600 dark:text-gray-200">
-                  Please select a message to view past history messages.
-                </p>
-              </div>
-            ) : (
-              <div className="comic-scroll max-h-[420px] overflow-y-auto pr-1 space-y-4">
-                {activeThread?.messages.map((m) => {
-                  const isUser = m.role === "user"
-                  return (
-                    <div key={m.id} className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
-                      <div className="relative max-w-[95%]">
-                        <div
-                          className={[
-                            "absolute top-6 z-10 h-5 w-5 border-b-2 border-ink",
-                            isUser
-                              ? "-right-2 -rotate-45 border-r-2 bg-blue-100 dark:bg-blue-900"
-                              : "-left-2 rotate-45 border-l-2 bg-white dark:bg-slate-700"
-                          ].join(" ")}
-                        />
-
-                        <div
-                          className={[
-                            "relative z-20 rounded-xl border-2 border-ink p-4 shadow-comic",
-                            isUser
-                              ? "bg-blue-100 text-ink dark:bg-blue-900 dark:text-white"
-                              : "bg-white text-ink dark:bg-slate-700 dark:text-white"
-                          ].join(" ")}
-                        >
-                          <p className="whitespace-pre-wrap font-body text-base font-bold leading-snug">
-                            {m.text}
-                          </p>
-                          <div className="mt-2 text-right text-[10px] font-bold text-gray-500 dark:text-gray-300">
-                            {new Date(m.ts).toLocaleString()}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+                  </div>
+                </button>
+              )
+            })}
           </div>
         </div>
       )}

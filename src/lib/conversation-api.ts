@@ -2,7 +2,7 @@
 // API client for the Conversations endpoint using existing api module
 
 import { api } from "./api"
-import type { ConversationRequest, ConversationResponse, PageState } from "~types/conversation"
+import type { ConversationRequest, ConversationResponse, PageState, ConversationSummary, ConversationDetail } from "~types/conversation"
 
 const CONVERSATIONS_ENDPOINT = "/api/chat"
 
@@ -42,9 +42,9 @@ export async function sendConversationMessage(
         errorMessage = (errObj.message || errObj.title || errObj.detail || JSON.stringify(response.error)) as string
       }
     }
-    
+
     console.error("Conversation API error:", response.status, response.error)
-    
+
     return {
       success: false,
       error: errorMessage
@@ -97,4 +97,88 @@ export async function getCurrentPageState(): Promise<{
       })
     })
   })
+}
+
+/**
+ * Get all conversations for the authenticated user
+ */
+export async function getConversations(): Promise<{
+  success: boolean
+  data?: ConversationSummary[]
+  error?: string
+}> {
+  const response = await api.get<ConversationSummary[]>("/api/conversations")
+
+  if (!response.success) {
+    let errorMessage = "Failed to fetch conversations"
+    if (response.error) {
+      if (typeof response.error === "string") {
+        errorMessage = response.error
+      } else if (typeof response.error === "object") {
+        const errObj = response.error as Record<string, unknown>
+        errorMessage = (errObj.message || errObj.title || errObj.detail || JSON.stringify(response.error)) as string
+      }
+    }
+
+    // Handle authentication errors
+    if (response.status === 401) {
+      errorMessage = "Please log in to view conversation history"
+    } else if (response.status === 403) {
+      errorMessage = "You don't have permission to view conversations"
+    }
+
+    console.error("Get conversations API error:", response.status, response.error)
+
+    return {
+      success: false,
+      error: errorMessage
+    }
+  }
+
+  return {
+    success: true,
+    data: response.data as ConversationSummary[]
+  }
+}
+
+/**
+ * Get a specific conversation with all its messages
+ */
+export async function getConversation(sessionId: string): Promise<{
+  success: boolean
+  data?: ConversationDetail
+  error?: string
+}> {
+  const response = await api.get<ConversationDetail>(`/api/conversations/${sessionId}`)
+
+  if (!response.success) {
+    let errorMessage = "Failed to fetch conversation"
+    if (response.error) {
+      if (typeof response.error === "string") {
+        errorMessage = response.error
+      } else if (typeof response.error === "object") {
+        const errObj = response.error as Record<string, unknown>
+        errorMessage = (errObj.message || errObj.title || errObj.detail || JSON.stringify(response.error)) as string
+      }
+    }
+
+    // Handle authentication errors
+    if (response.status === 401) {
+      errorMessage = "Please log in to view this conversation"
+    } else if (response.status === 403) {
+      errorMessage = "You don't have permission to view this conversation"
+    }
+
+    console.error("Get conversation API error:", response.status, response.error)
+
+    return {
+      success: false,
+      error: errorMessage
+    }
+  }
+
+  return {
+    success: true,
+    data: response.data as ConversationDetail
+  }
 }
