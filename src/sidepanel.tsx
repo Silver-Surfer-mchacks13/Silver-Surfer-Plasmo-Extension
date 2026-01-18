@@ -15,7 +15,8 @@ export default function SidePanel() {
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     user: null,
-    accessToken: null
+    accessToken: null,
+    idToken: null
   })
 
   // Check auth state and theme on mount
@@ -62,7 +63,8 @@ export default function SidePanel() {
         setAuthState({
           isAuthenticated: false,
           user: null,
-          accessToken: null
+          accessToken: null,
+          idToken: null
         })
       }
     })
