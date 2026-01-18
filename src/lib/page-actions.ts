@@ -314,3 +314,329 @@ export function selectDropdown(selector: string, value: string): { success: bool
 
   return { success: true, message: `Selected option: "${value}"` }
 }
+
+// ============================================
+// DOM DISTILLER - LLM-friendly page structure
+// ============================================
+
+interface DOMElement {
+  index: number // Position in document flow
+  selector: string
+  tag: string
+  type?: string // For inputs/buttons
+  role?: string
+  text?: string
+  placeholder?: string
+  value?: string
+  href?: string
+  src?: string
+  alt?: string
+  ariaLabel?: string
+  isVisible: boolean
+  isInteractive: boolean
+  options?: string[] // For select elements
+}
+
+interface DistilledDOM {
+  url: string
+  title: string
+  metaDescription: string | null
+  fullText: string // Full text content of the page
+  timestamp: string
+  viewport: { width: number; height: number }
+  summary: {
+    totalElements: number
+    interactiveElements: number
+    headings: number
+    links: number
+    buttons: number
+    inputs: number
+    images: number
+  }
+  elements: DOMElement[] // Flat list in document flow order
+}
+
+/**
+ * Generates a unique CSS selector for an element
+ */
+function generateSelector(element: Element): string {
+  // Try ID first (most reliable)
+  if (element.id) {
+    return `#${CSS.escape(element.id)}`
+  }
+
+  // Try unique class combination
+  if (element.classList.length > 0) {
+    const classes = Array.from(element.classList).slice(0, 3).map(c => `.${CSS.escape(c)}`).join("")
+    const matches = document.querySelectorAll(classes)
+    if (matches.length === 1) {
+      return classes
+    }
+  }
+
+  // Try data attributes
+  for (const attr of element.attributes) {
+    if (attr.name.startsWith("data-") && attr.value) {
+      const selector = `[${attr.name}="${CSS.escape(attr.value)}"]`
+      const matches = document.querySelectorAll(selector)
+      if (matches.length === 1) {
+        return selector
+      }
+    }
+  }
+
+  // Build path-based selector
+  const path: string[] = []
+  let current: Element | null = element
+
+  while (current && current !== document.body) {
+    let selector = current.tagName.toLowerCase()
+    
+    if (current.id) {
+      selector = `#${CSS.escape(current.id)}`
+      path.unshift(selector)
+      break
+    }
+
+    // Add nth-child if needed
+    const parent = current.parentElement
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(c => c.tagName === current!.tagName)
+      if (siblings.length > 1) {
+        const index = siblings.indexOf(current) + 1
+        selector += `:nth-of-type(${index})`
+      }
+    }
+
+    path.unshift(selector)
+    current = parent
+  }
+
+  return path.join(" > ")
+}
+
+/**
+ * Checks if an element is visible in the viewport
+ */
+function isElementVisible(element: Element): boolean {
+  const style = window.getComputedStyle(element)
+  if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+    return false
+  }
+  
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+/**
+ * Truncates text to a reasonable length for LLM context
+ */
+function truncateText(text: string | null | undefined, maxLength: number = 100): string | undefined {
+  if (!text) return undefined
+  const cleaned = text.trim().replace(/\s+/g, " ")
+  if (cleaned.length <= maxLength) return cleaned
+  return cleaned.substring(0, maxLength) + "..."
+}
+
+/**
+ * Extracts element information for LLM consumption
+ */
+function extractElementInfo(element: Element, index: number): DOMElement {
+  const el = element as HTMLElement
+  const inputEl = element as HTMLInputElement
+  const selectEl = element as HTMLSelectElement
+
+  const info: DOMElement = {
+    index,
+    selector: generateSelector(element),
+    tag: element.tagName.toLowerCase(),
+    isVisible: isElementVisible(element),
+    isInteractive: ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA"].includes(element.tagName) ||
+                   el.getAttribute("role") === "button" ||
+                   el.onclick !== null ||
+                   el.hasAttribute("tabindex")
+  }
+
+  // Text content
+  const directText = Array.from(element.childNodes)
+    .filter(n => n.nodeType === Node.TEXT_NODE)
+    .map(n => n.textContent?.trim())
+    .filter(Boolean)
+    .join(" ")
+  
+  info.text = truncateText(directText || element.textContent)
+
+  // Type for inputs/buttons
+  if (inputEl.type) info.type = inputEl.type
+  
+  // Role
+  const role = el.getAttribute("role")
+  if (role) info.role = role
+
+  // Placeholder
+  if (inputEl.placeholder) info.placeholder = inputEl.placeholder
+
+  // Current value (not for passwords)
+  if (inputEl.value && inputEl.type !== "password") {
+    info.value = truncateText(inputEl.value, 50)
+  }
+
+  // Href for links
+  const href = el.getAttribute("href")
+  if (href && !href.startsWith("javascript:")) {
+    info.href = href.startsWith("/") ? href : truncateText(href, 80)
+  }
+
+  // Src and alt for images
+  const img = element as HTMLImageElement
+  if (img.src) info.src = truncateText(img.src, 80)
+  if (img.alt) info.alt = truncateText(img.alt, 80)
+
+  // Aria label
+  const ariaLabel = el.getAttribute("aria-label")
+  if (ariaLabel) info.ariaLabel = truncateText(ariaLabel)
+
+  // Options for select
+  if (element.tagName === "SELECT") {
+    info.options = Array.from(selectEl.options).map(o => o.textContent?.trim() || o.value).slice(0, 10)
+    if (selectEl.options.length > 10) {
+      info.options.push(`... and ${selectEl.options.length - 10} more`)
+    }
+  }
+
+  return info
+}
+
+/**
+ * Distills the DOM into a structured, LLM-friendly JSON format
+ * Elements are returned in document flow order as a flat list
+ */
+export function distillDOM(): { success: boolean; message: string; data?: DistilledDOM } {
+  try {
+    // Get meta description
+    const metaDesc = document.querySelector('meta[name="description"]') as HTMLMetaElement
+    
+    // Extract full text content from the body
+    const extractFullText = (): string => {
+      const body = document.body
+      if (!body) return ""
+      
+      // Clone the body to avoid modifying the actual DOM
+      const clone = body.cloneNode(true) as HTMLElement
+      
+      // Remove script, style, and other non-content elements
+      const removeSelectors = ["script", "style", "noscript", "svg", "iframe", "template"]
+      removeSelectors.forEach(sel => {
+        clone.querySelectorAll(sel).forEach(el => el.remove())
+      })
+      
+      // Get text content and clean it up
+      const text = clone.textContent || ""
+      return text
+        .replace(/\s+/g, " ")  // Collapse whitespace
+        .replace(/\n\s*\n/g, "\n")  // Remove empty lines
+        .trim()
+    }
+    
+    const distilled: DistilledDOM = {
+      url: window.location.href,
+      title: document.title,
+      metaDescription: metaDesc?.content || null,
+      fullText: extractFullText(),
+      timestamp: new Date().toISOString(),
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight
+      },
+      summary: {
+        totalElements: 0,
+        interactiveElements: 0,
+        headings: 0,
+        links: 0,
+        buttons: 0,
+        inputs: 0,
+        images: 0
+      },
+      elements: []
+    }
+
+    // Selector for all relevant elements we want to capture
+    const relevantSelector = [
+      "h1", "h2", "h3", "h4", "h5", "h6",
+      "p",
+      "a[href]",
+      "button", "[role='button']", "input[type='submit']", "input[type='button']",
+      "input:not([type='hidden'])", "textarea", "select",
+      "img[alt]", "img[src]",
+      "nav", "[role='navigation']",
+      "main", "article", "[role='main']",
+      "form",
+      "header", "footer", "aside",
+      "[role='banner']", "[role='search']", "[role='contentinfo']",
+      "label",
+      "ul", "ol",
+      "table"
+    ].join(", ")
+
+    // Query all relevant elements
+    const allElements = document.querySelectorAll(relevantSelector)
+    
+    // Create a map to track which elements we've seen (to avoid duplicates)
+    const seenElements = new Set<Element>()
+    
+    // Sort elements by document position (document flow order)
+    const sortedElements = Array.from(allElements).sort((a, b) => {
+      const position = a.compareDocumentPosition(b)
+      if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1
+      return 0
+    })
+
+    let index = 0
+    for (const element of sortedElements) {
+      // Skip duplicates
+      if (seenElements.has(element)) continue
+      seenElements.add(element)
+
+      // Skip hidden elements
+      if (!isElementVisible(element)) continue
+
+      // Extract element info
+      const info = extractElementInfo(element, index)
+      distilled.elements.push(info)
+      index++
+
+      // Update summary counts
+      const tag = element.tagName.toLowerCase()
+      if (["h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
+        distilled.summary.headings++
+      } else if (tag === "a") {
+        distilled.summary.links++
+      } else if (tag === "button" || element.getAttribute("role") === "button" || 
+                 (tag === "input" && ["submit", "button"].includes((element as HTMLInputElement).type))) {
+        distilled.summary.buttons++
+      } else if (["input", "textarea", "select"].includes(tag)) {
+        distilled.summary.inputs++
+      } else if (tag === "img") {
+        distilled.summary.images++
+      }
+
+      if (info.isInteractive) {
+        distilled.summary.interactiveElements++
+      }
+    }
+
+    distilled.summary.totalElements = distilled.elements.length
+
+    return { 
+      success: true, 
+      message: `Distilled ${distilled.summary.totalElements} elements in document flow order`,
+      data: distilled 
+    }
+  } catch (error) {
+    return { 
+      success: false, 
+      message: error instanceof Error ? error.message : "Failed to distill DOM" 
+    }
+  }
+}
