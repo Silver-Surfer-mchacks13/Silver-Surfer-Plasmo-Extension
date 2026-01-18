@@ -67,7 +67,7 @@ export default function SidePanel() {
       }
     })
   }
-  const [tab, setTab] = useState<"chat" | "settings" | "test">("chat")
+  const [tab, setTab] = useState<"chat" | "settings" | "history">("chat")
 
   const rootClass = useMemo(
     () =>
@@ -172,9 +172,9 @@ export default function SidePanel() {
 
             <div className="relative flex-1">
               <button
-                onClick={() => setTab("test")}
+                onClick={() => setTab("history")}
                 className={`w-full rounded-t-lg py-2 px-2 text-base font-bold transition-colors ${
-                  tab === "test"
+                  tab === "history"
                     ? "relative top-[2px] border-t-2 border-l-2 border-r-2 border-ink bg-purple-600 text-white"
                     : "border-2 border-ink bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
                 }`}>
@@ -182,7 +182,7 @@ export default function SidePanel() {
                   <span className="material-icons-outlined text-lg">
                     science
                   </span>
-                  TEST
+                  HISTORY
                 </span>
               </button>
             </div>
@@ -209,7 +209,7 @@ export default function SidePanel() {
         {/* Body */}
         {tab === "settings" ? (
           <SettingsTab />
-        ) : tab === "test" ? (
+        ) : tab === "history" ? (
           <TestTab />
         ) : (
           <ChatTab />
