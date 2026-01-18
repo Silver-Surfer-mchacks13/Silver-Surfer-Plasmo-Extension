@@ -24,6 +24,9 @@ importers:
       '@ianvs/prettier-plugin-sort-imports':
         specifier: 4.1.1
         version: 4.1.1(@vue/compiler-sfc@3.3.4)(prettier@3.2.4)
+      '@plasmohq/parcel-resolver':
+        specifier: ^0.14.2
+        version: 0.14.2
       '@tailwindcss/container-queries':
         specifier: ^0.1.1
         version: 0.1.1(tailwindcss@3.4.1)
@@ -1239,6 +1242,10 @@ packages:
     resolution: {integrity: sha512-1nmmMI7N5rtpni2TpUyPkI8XU1wIk/lTDGNZXLxtkzOoFiFP2sc2xZq4OGhmnRYvWphZYrnhMjRrjNJmqOFqxw==}
     engines: {parcel: '>= 2.7.0'}
 
+  '@plasmohq/parcel-resolver@0.14.2':
+    resolution: {integrity: sha512-CpksScCZ8QZKM0THh68CH4dRCWPZanPHwQTFyh2onGtA/LZzwC8IIaPszfA2qdsH9dtApZ/w9i7TvZZcHGXnfA==}
+    engines: {parcel: '>= 2.7.0'}
+
   '@plasmohq/parcel-runtime@0.25.2':
     resolution: {integrity: sha512-oeW/JKIYBkkB8vtFAvCTODYH+UeXjh78iFchUyIkdGh69SPViPqW91xS45M7G8Q+0kNV7In/Byv701XyS3W4sg==}
     engines: {parcel: '>= 2.7.0'}
@@ -1998,6 +2005,10 @@ packages:
 
   fs-extra@11.1.1:
     resolution: {integrity: sha512-MGIE4HOvQCeUCzmlHs0vXpih4ysz4wg9qiSAu6cd42lVwPbTM1TjV7RusoyQqMmk/95gdQZX72u+YW+c3eEpFQ==}
+    engines: {node: '>=14.14'}
+
+  fs-extra@11.3.0:
+    resolution: {integrity: sha512-Z4XaCL6dUDHfP/jT25jJKMmtxvuwbkrD1vNSMFlo9lNLY2c5FHYSQgHPRZUjAB26TpDEoW9HCOgplrdbaPV/ew==}
     engines: {node: '>=14.14'}
 
   fsevents@2.3.3:
@@ -4528,6 +4539,16 @@ snapshots:
       fs-extra: 11.1.1
       got: 13.0.0
 
+  '@plasmohq/parcel-resolver@0.14.2':
+    dependencies:
+      '@parcel/core': 2.9.3
+      '@parcel/hash': 2.9.3
+      '@parcel/plugin': 2.9.3(@parcel/core@2.9.3)
+      '@parcel/types': 2.9.3(@parcel/core@2.9.3)
+      fast-glob: 3.3.3
+      fs-extra: 11.3.0
+      got: 14.4.6
+
   '@plasmohq/parcel-runtime@0.25.2':
     dependencies:
       '@parcel/core': 2.9.3
@@ -5339,6 +5360,12 @@ snapshots:
   form-data-encoder@4.1.0: {}
 
   fs-extra@11.1.1:
+    dependencies:
+      graceful-fs: 4.2.11
+      jsonfile: 6.2.0
+      universalify: 2.0.1
+
+  fs-extra@11.3.0:
     dependencies:
       graceful-fs: 4.2.11
       jsonfile: 6.2.0

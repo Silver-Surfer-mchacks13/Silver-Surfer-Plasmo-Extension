@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@ianvs/prettier-plugin-sort-imports": "4.1.1",
+    "@plasmohq/parcel-resolver": "^0.14.2",
     "@tailwindcss/container-queries": "^0.1.1",
     "@tailwindcss/forms": "^0.5.11",
     "@types/chrome": "0.0.258",
@@ -28,22 +29,23 @@
     "typescript": "5.3.3"
   },
   "manifest": {
-  "key": "$CRX_KEY",
-  "host_permissions": [
-    "https://*/*", 
-    "http://localhost:5000/*",
-    "http://localhost:7265/*"
-  ],
-  "permissions": [
-    "sidePanel",
-    "storage",
-    "tabs",
-    "activeTab",
-    "identity",
-    "offscreen"
-  ],
-  "side_panel": {
-    "default_path": "sidepanel.html"
+    "key": "$CRX_KEY",
+    "host_permissions": [
+      "https://*/*",
+      "http://localhost:5000/*",
+      "http://localhost:7265/*"
+    ],
+    "permissions": [
+      "sidePanel",
+      "storage",
+      "tabs",
+      "activeTab",
+      "identity",
+      "offscreen",
+      "scripting"
+    ],
+    "side_panel": {
+      "default_path": "sidepanel.html"
+    }
   }
-}
 }

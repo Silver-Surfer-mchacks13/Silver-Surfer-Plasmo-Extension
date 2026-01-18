@@ -2,8 +2,12 @@
 // Chat interface component that integrates with the Conversations API
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { sendConversationMessage, getCurrentPageState } from "~lib/conversation-api"
-import type { ChatMessage, ConversationAction, ChatState } from "~types/conversation"
+import { sendConversationMessage, getCurrentPageState, getConversation } from "~lib/conversation-api"
+import type { ChatMessage, ConversationAction, ChatState, ConversationMessage } from "~types/conversation"
+
+const PENDING_SESSION_KEY = "pending_session_id"
+const START_NEW_CONVERSATION_KEY = "start_new_conversation"
+const ACTIVE_CHAT_SESSION_KEY = "active_chat_session_id"
 
 const HANDS_FREE_SEGMENT_MS = 7000
 
@@ -55,23 +59,49 @@ function ActionBadge({ action }: { action: ConversationAction }) {
   const { icon, label, color } = getActionInfo()
 
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-bold ${color} text-ink dark:text-white`}>
-      <span className="material-icons-outlined text-sm">{icon}</span>
-      {label}
-    </span>
+    <div className="flex flex-col items-start">
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-bold ${color} text-ink dark:text-white`}>
+        <span className="material-icons-outlined text-sm">{icon}</span>
+        {label}
+      </span>
+      {action.reasoning && (
+        <span className="text-[10px] text-gray-600 dark:text-gray-400 mt-1 max-w-[200px] leading-tight">
+          {action.reasoning}
+        </span>
+      )}
+    </div>
   )
 }
 
 // Execute an action on the current page via content script
 async function executeAction(action: ConversationAction): Promise<{ success: boolean; message?: string }> {
-  return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      const tabId = tabs[0]?.id
-      if (!tabId) {
-        resolve({ success: false, message: "No active tab" })
-        return
-      }
+  return new Promise(async (resolve) => {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    const tabId = tabs[0]?.id
+    if (!tabId) {
+      resolve({ success: false, message: "No active tab" })
+      return
+    }
 
+    // Handle actions that don't need page execution
+    if (action.action_type === "wait") {
+      await new Promise((r) => setTimeout(r, action.duration))
+      resolve({ success: true, message: `Waited ${action.duration}ms` })
+      return
+    }
+
+    if (action.action_type === "message" || action.action_type === "complete") {
+      resolve({ success: true })
+      return
+    }
+
+    // Store action parameters for fallback
+    const selector = action.x_path || action.selector
+    const value = action.value
+    const scaleFactor = action.scale_factor || 1.3
+
+    // Try sendMessage first (if content script is ready)
+    try {
       let messageAction: string
       let messagePayload: Record<string, unknown> = {}
 
@@ -112,29 +142,183 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
         case "restore_clutter":
           messageAction = "RESTORE_CLUTTER"
           break
-        case "wait":
-          // Handle wait locally
-          await new Promise((r) => setTimeout(r, action.duration))
-          resolve({ success: true, message: `Waited ${action.duration}ms` })
-          return
-        case "message":
-        case "complete":
-          // These don't need page execution
-          resolve({ success: true })
-          return
-        default:
-          resolve({ success: false, message: "Unknown action type" })
-          return
       }
 
       chrome.tabs.sendMessage(tabId, { action: messageAction, ...messagePayload }, (response) => {
         if (chrome.runtime.lastError) {
-          resolve({ success: false, message: chrome.runtime.lastError.message })
+          const errorMsg = chrome.runtime.lastError.message
+          if (errorMsg?.includes("Receiving end does not exist") ||
+            errorMsg?.includes("Could not establish connection")) {
+            // Content script not ready, fall back to executeScript
+            console.log("Content script not ready for action, using executeScript fallback")
+            fallbackToExecuteScript()
+          } else {
+            resolve({ success: false, message: errorMsg || "Failed to execute action" })
+          }
         } else {
           resolve(response || { success: true })
         }
       })
-    })
+    } catch (sendError) {
+      // Content script not loaded, fall back to executeScript
+      console.log("Content script not loaded for action, using executeScript fallback:", sendError)
+      fallbackToExecuteScript()
+    }
+
+    // Fallback function using executeScript (plain JavaScript only!)
+    async function fallbackToExecuteScript() {
+      try {
+        // Create plain JavaScript function based on action type (NO TypeScript syntax!)
+        let executeFunc: any
+        let args: any[] = []
+
+        switch (action.action_type) {
+          case "click":
+            executeFunc = function (sel) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              const el = element
+              const unsafePatterns = [
+                /pay/i, /purchase/i, /buy/i, /checkout/i, /order/i,
+                /confirm/i, /submit.*order/i, /complete.*purchase/i,
+                /delete/i, /remove/i, /cancel.*subscription/i,
+                /sign.*out/i, /log.*out/i, /disconnect/i,
+                /unsubscribe/i, /deactivate/i
+              ]
+              const text = ((el.textContent || "") + (el.value || "") + (el.getAttribute("aria-label") || "")).toLowerCase()
+              for (let i = 0; i < unsafePatterns.length; i++) {
+                if (unsafePatterns[i].test(text)) {
+                  return { success: false, message: "Blocked: This appears to be a sensitive action. Please click manually." }
+                }
+              }
+              el.click()
+              return { success: true, message: "Clicked element: " + sel }
+            }
+            args = [selector]
+            break
+          case "highlight":
+            executeFunc = function (sel) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              element.setAttribute("data-silver-surfer-highlight", "true")
+              element.style.setProperty("outline", "4px solid #000", "important")
+              element.style.setProperty("outline-offset", "2px", "important")
+              element.style.setProperty("box-shadow", "6px 6px 0 0 #3b82f6", "important")
+              return { success: true, message: "Highlighted element: " + sel }
+            }
+            args = [selector]
+            break
+          case "remove_highlights":
+            executeFunc = function () {
+              document.querySelectorAll("[data-silver-surfer-highlight]").forEach(function (el) {
+                el.removeAttribute("data-silver-surfer-highlight")
+                el.style.removeProperty("outline")
+                el.style.removeProperty("outline-offset")
+                el.style.removeProperty("box-shadow")
+              })
+              return { success: true, message: "Removed all highlights" }
+            }
+            break
+          case "magnify":
+            executeFunc = function (sel, scale) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              const scaleVal = scale || 1.3
+              element.style.setProperty("font-size", (scaleVal * 100) + "%", "important")
+              element.style.setProperty("transform", "scale(" + scaleVal + ")", "important")
+              return { success: true, message: "Magnified element: " + sel }
+            }
+            args = [selector, scaleFactor]
+            break
+          case "reset_magnification":
+            executeFunc = function () {
+              document.querySelectorAll("[style*='font-size'], [style*='transform']").forEach(function (el) {
+                el.style.removeProperty("font-size")
+                el.style.removeProperty("transform")
+              })
+              return { success: true, message: "Reset magnification" }
+            }
+            break
+          case "scroll":
+            executeFunc = function (sel) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              element.scrollIntoView({ behavior: "smooth", block: "center" })
+              return { success: true, message: "Scrolled to element: " + sel }
+            }
+            args = [selector]
+            break
+          case "fill_form":
+            executeFunc = function (sel, val) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              if (["INPUT", "TEXTAREA"].indexOf(element.tagName) === -1) {
+                return { success: false, message: "Element is not an input field: " + element.tagName }
+              }
+              const inputType = element.type || ""
+              if (["password", "credit-card"].indexOf(inputType) !== -1) {
+                return { success: false, message: "Blocked: Cannot auto-fill sensitive fields" }
+              }
+              element.focus()
+              element.value = val || ""
+              element.dispatchEvent(new Event("input", { bubbles: true }))
+              element.dispatchEvent(new Event("change", { bubbles: true }))
+              return { success: true, message: "Filled field: " + sel }
+            }
+            args = [selector, value]
+            break
+          case "select_dropdown":
+            executeFunc = function (sel, val) {
+              const element = document.querySelector(sel)
+              if (!element || element.tagName !== "SELECT") {
+                return { success: false, message: "Select element not found: " + sel }
+              }
+              element.value = val || ""
+              element.dispatchEvent(new Event("change", { bubbles: true }))
+              return { success: true, message: "Selected option: " + val }
+            }
+            args = [selector, value]
+            break
+          case "remove_clutter":
+            executeFunc = function () {
+              const clutterSelectors = ["aside", "nav", "footer", ".ad", ".advertisement", "[class*='ad-']"]
+              clutterSelectors.forEach(function (sel) {
+                document.querySelectorAll(sel).forEach(function (el) {
+                  el.style.setProperty("display", "none", "important")
+                })
+              })
+              return { success: true, message: "Removed clutter" }
+            }
+            break
+          case "restore_clutter":
+            executeFunc = function () {
+              document.querySelectorAll("[style*='display: none']").forEach(function (el) {
+                el.style.removeProperty("display")
+              })
+              return { success: true, message: "Restored clutter" }
+            }
+            break
+          default:
+            resolve({ success: false, message: "Unknown action type for fallback" })
+            return
+        }
+
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          func: executeFunc,
+          args: args
+        })
+
+        if (results && results[0]?.result) {
+          resolve(results[0].result)
+        } else {
+          resolve({ success: false, message: "Action execution returned no result" })
+        }
+      } catch (scriptError) {
+        console.error("executeScript failed for action:", scriptError)
+        resolve({ success: false, message: scriptError instanceof Error ? scriptError.message : "Failed to execute action" })
+      }
+    }
   })
 }
 
@@ -222,6 +406,7 @@ export default function ChatTab() {
     isProcessing: false,
     isComplete: false
   })
+  const [conversationTitle, setConversationTitle] = useState<string | null>(null)
   const [inputValue, setInputValue] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const [isHandsFree, setIsHandsFree] = useState(false)
@@ -269,7 +454,7 @@ export default function ChatTab() {
         checkPageChange()
       }
     }
-    
+
     chrome.tabs.onUpdated.addListener(handleTabUpdate)
     return () => chrome.tabs.onUpdated.removeListener(handleTabUpdate)
   }, [currentPageUrl])
@@ -343,7 +528,12 @@ export default function ChatTab() {
       return
     }
 
-    const { session_id, actions, complete, needs_observation } = response.data
+    const { session_id, actions, complete, needs_observation, title } = response.data
+
+    // Update conversation title if provided
+    if (title && typeof title === "string") {
+      setConversationTitle(title)
+    }
 
     // Extract messages from actions
     const messageActions = actions.filter(
@@ -384,6 +574,10 @@ export default function ChatTab() {
         messages: [...prev.messages, ...assistantMessages],
         sessionId: session_id
       }))
+      // Update active session in storage for History tab to check
+      if (session_id) {
+        chrome.storage.local.set({ [ACTIVE_CHAT_SESSION_KEY]: session_id })
+      }
     }
 
     // Execute page actions
@@ -391,69 +585,85 @@ export default function ChatTab() {
       await executeActions(executableActions)
     }
 
-    // Determine if we should continue the agent loop
-    // Continue if:
-    // 1. Agent explicitly wants observation, OR
-    // 2. We executed page actions and task isn't complete, OR
-    // 3. Agent only sent a message (no page actions) but task isn't complete - nudge it to act
-    const hasExecutableActions = executableActions.length > 0
-    const onlySentMessage = !hasExecutableActions && actions.length > 0 // Agent only used send_message
-    const shouldNudgeAgent = onlySentMessage && !complete && iteration < 3 // Nudge up to 3 times
-    
-    const shouldContinue = (needs_observation || hasExecutableActions || shouldNudgeAgent) && !complete && iteration < MAX_ITERATIONS
+    // If task is not complete and we haven't hit max iterations, continue
+    if (!complete && iteration < MAX_ITERATIONS) {
+      if (needs_observation) {
+        // Agent wants to observe the page after actions
+        // Wait for page to update after actions
+        await new Promise((r) => setTimeout(r, 1000))
 
-    if (shouldContinue) {
-      // Wait for page to update after actions (shorter wait if just nudging)
-      await new Promise((r) => setTimeout(r, hasExecutableActions ? 1200 : 500))
+        // Capture new page state
+        const newPageData = await getCurrentPageState()
 
-      // Capture new page state - this is a FRESH capture
-      const newPageData = await getCurrentPageState()
-
-      if (newPageData) {
-        // Add a thinking indicator only if we're doing meaningful work
-        if (hasExecutableActions) {
+        if (newPageData) {
+          // Add a thinking indicator
           setChatState((prev) => ({
             ...prev,
             messages: [...prev.messages, {
               id: generateId(),
               role: "assistant",
-              content: "Verifying the action worked...",
+              content: "Observing the page...",
               timestamp: new Date()
             }]
           }))
-        }
 
-        // Send observation to agent with fresh screenshot
-        // Note: Get fresh history since state may have updated
-        const historyForObservation = getConversationHistory(chatState.messages)
-        
-        // Craft the observation message - nudge if agent only sent a message without acting
-        const observationMessage = shouldNudgeAgent
-          ? `[NUDGE] You explained what you would do but didn't take action. Please IMMEDIATELY perform the action now. Original task: ${originalMessage}`
-          : `[OBSERVATION] Verifying action and continuing task: ${originalMessage}`
-        
-        const observationResponse = await sendConversationMessage(
-          observationMessage,
+          // Send observation to agent (use special message format)
+          const observationResponse = await sendConversationMessage(
+            `[OBSERVATION] Continuing task: ${originalMessage}`,
+            session_id,
+            newPageData.pageState,
+            newPageData.title
+          )
+
+          // Recursively process the next response
+          await processAgentResponse(
+            observationResponse,
+            session_id,
+            originalMessage,
+            iteration + 1
+          )
+        } else {
+          // Couldn't capture page state, mark as done
+          setChatState((prev) => ({
+            ...prev,
+            isProcessing: false,
+            isComplete: true
+          }))
+        }
+      } else {
+        // Agent wants to continue without observation - send continuation request with current page state
+        // Wait a bit for actions to complete
+        await new Promise((r) => setTimeout(r, 500))
+
+        // Add a thinking indicator
+        setChatState((prev) => ({
+          ...prev,
+          messages: [...prev.messages, {
+            id: generateId(),
+            role: "assistant",
+            content: "Continuing...",
+            timestamp: new Date()
+          }]
+        }))
+
+        // Get current page state (even though needs_observation is false, we still send it for context)
+        const currentPageData = await getCurrentPageState()
+
+        // Send continuation request to agent
+        const continuationResponse = await sendConversationMessage(
+          `[CONTINUE] Continuing task: ${originalMessage}`,
           session_id,
-          newPageData.pageState,
-          newPageData.title,
-          historyForObservation
+          currentPageData?.pageState || null,
+          currentPageData?.title || null
         )
 
         // Recursively process the next response
         await processAgentResponse(
-          observationResponse,
+          continuationResponse,
           session_id,
           originalMessage,
           iteration + 1
         )
-      } else {
-        // Couldn't capture page state, mark as done
-        setChatState((prev) => ({
-          ...prev,
-          isProcessing: false,
-          isComplete: true
-        }))
       }
     } else {
       // Task complete or max iterations reached
@@ -597,7 +807,10 @@ export default function ChatTab() {
       isProcessing: false,
       isComplete: false
     })
+    setConversationTitle(null)
     setInputValue("")
+    // Clear active session in storage
+    chrome.storage.local.remove([ACTIVE_CHAT_SESSION_KEY])
   }, [])
 
   const handleHandsFreeToggle = useCallback(() => {
@@ -664,6 +877,90 @@ export default function ChatTab() {
   useEffect(() => {
     scrollToBottom()
   }, [scrollToBottom, chatState.messages])
+
+  // Load conversation from history if pending sessionId exists
+  const loadPendingConversation = useCallback(async () => {
+    try {
+      const result = await chrome.storage.local.get([PENDING_SESSION_KEY])
+      const pendingSessionId = result[PENDING_SESSION_KEY]
+
+      if (pendingSessionId && typeof pendingSessionId === "string") {
+        // Only load if we don't already have messages or a sessionId (avoid overwriting active conversation)
+        if (chatState.messages.length === 0 && chatState.sessionId === null) {
+          // Clear the pending sessionId before loading to prevent race conditions
+          await chrome.storage.local.remove([PENDING_SESSION_KEY])
+
+          const conversationResult = await getConversation(pendingSessionId)
+
+          if (conversationResult.success && conversationResult.data) {
+            // Map API messages to ChatMessage format
+            const loadedMessages: ChatMessage[] = conversationResult.data.messages.map((msg: ConversationMessage) => ({
+              id: msg.id,
+              role: msg.role as ChatMessage["role"],
+              content: msg.content,
+              timestamp: new Date(msg.CreatedAt),
+              actions: undefined // API messages don't include actions, they're stored separately
+            }))
+
+            setChatState({
+              messages: loadedMessages,
+              sessionId: pendingSessionId,
+              isProcessing: false,
+              isComplete: conversationResult.data.CompletedAt !== null
+            })
+            setConversationTitle(conversationResult.data.Title || null)
+            // Update active session in storage for History tab to check
+            if (pendingSessionId) {
+              chrome.storage.local.set({ [ACTIVE_CHAT_SESSION_KEY]: pendingSessionId })
+            }
+          }
+        } else {
+          // If we have an active conversation, just clear the pending sessionId
+          await chrome.storage.local.remove([PENDING_SESSION_KEY])
+        }
+      }
+    } catch (error) {
+      console.error("Error loading pending conversation:", error)
+    }
+  }, [chatState.messages.length, chatState.sessionId])
+
+  useEffect(() => {
+    loadPendingConversation()
+  }, [loadPendingConversation])
+
+  // Also listen for storage changes (when History tab saves pending sessionId or requests new conversation)
+  useEffect(() => {
+    const handleStorageChange = async (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string
+    ) => {
+      if (areaName === "local") {
+        // Handle new conversation request
+        if (changes[START_NEW_CONVERSATION_KEY]) {
+          const shouldStartNew = changes[START_NEW_CONVERSATION_KEY].newValue
+          if (shouldStartNew === true) {
+            // Clear the flag
+            await chrome.storage.local.remove([START_NEW_CONVERSATION_KEY])
+            // Only start new if we have an active conversation
+            if (chatState.messages.length > 0 || chatState.sessionId !== null) {
+              handleNewConversation()
+            }
+          }
+        }
+
+        // Handle pending sessionId (load conversation from history)
+        if (changes[PENDING_SESSION_KEY]) {
+          // Only load if we don't have messages or a sessionId (avoid overwriting active conversation)
+          if (chatState.messages.length === 0 && chatState.sessionId === null) {
+            loadPendingConversation()
+          }
+        }
+      }
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChange)
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange)
+  }, [chatState.messages.length, chatState.sessionId, loadPendingConversation, handleNewConversation])
 
   useEffect(() => {
     if (!isHandsFree || isRecording || chatState.isProcessing || isAssistantSpeaking) {
@@ -741,6 +1038,14 @@ export default function ChatTab() {
     <>
       {/* Chat messages area */}
       <div className="comic-scroll bg-dots flex-1 space-y-6 overflow-y-auto border-t-4 border-ink bg-white bg-halftone-light p-4 dark:bg-slate-800 dark:bg-halftone-dark">
+        {/* Conversation title */}
+        {conversationTitle && (
+          <div className="mb-4 pb-3 border-b-2 border-ink dark:border-white">
+            <h2 className="font-body text-lg font-bold text-ink dark:text-white">
+              {conversationTitle}
+            </h2>
+          </div>
+        )}
         {/* Welcome message if no messages */}
         {chatState.messages.length === 0 && (
           <div className="flex w-full justify-start">
