@@ -90,8 +90,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "DISTILL_DOM") {
-    const result = distillDOM()
-    sendResponse(result)
+    try {
+      const result = distillDOM()
+      console.log("Content script: distillDOM result:", {
+        success: result.success,
+        hasData: !!result.data,
+        elementCount: result.data?.elements?.length,
+        message: result.message
+      })
+      
+      // Ensure we always send a valid response
+      if (result && typeof result === 'object') {
+        sendResponse(result)
+      } else {
+        console.error("Content script: Invalid distillDOM result:", result)
+        sendResponse({
+          success: false,
+          message: "Invalid result from distillDOM function"
+        })
+      }
+    } catch (error) {
+      console.error("Content script: Error in DISTILL_DOM handler:", error)
+      sendResponse({
+        success: false,
+        message: error instanceof Error ? error.message : "Unknown error during DOM distillation"
+      })
+    }
     return true
   }
 

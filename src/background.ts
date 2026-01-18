@@ -456,16 +456,50 @@ async function handleGetHtml() {
       return { success: false, error: errorMsg || "Failed to communicate with content script" }
     }
 
-    if (response?.success && response?.data) {
-      capturedData.html = JSON.stringify(response.data) // Store as JSON string
-      capturedData.url = tab.url || null
-      capturedData.timestamp = Date.now()
-      console.log("Successfully captured distilled DOM:", { elementCount: response.data?.elements?.length || 0 })
-      return { success: true, data: { distilledDOM: response.data, url: tab.url } }
+    // Log the full response for debugging
+    console.log("DISTILL_DOM response received:", {
+      hasResponse: !!response,
+      success: response?.success,
+      hasData: !!response?.data,
+      message: response?.message,
+      dataType: typeof response?.data,
+      elementCount: response?.data?.elements?.length
+    })
+
+    // Check if response is valid
+    if (!response) {
+      console.error("No response received from content script")
+      return { success: false, error: "No response from content script" }
     }
 
-    console.error("DOM distillation failed:", response?.message || "Unknown error", response)
-    return { success: false, error: response?.message || "DOM distillation failed" }
+    // Check if distillation was successful
+    if (response.success === false) {
+      console.error("DOM distillation failed:", response.message || "Unknown error", response)
+      return { success: false, error: response.message || "DOM distillation failed" }
+    }
+
+    // Check if we have data
+    if (!response.data) {
+      console.error("DOM distillation succeeded but no data returned:", response)
+      return { success: false, error: "Distillation succeeded but returned no data" }
+    }
+
+    // Validate that data has the expected structure
+    if (typeof response.data !== 'object' || response.data === null) {
+      console.error("DOM distillation data is not an object:", typeof response.data, response.data)
+      return { success: false, error: "Invalid data structure returned from distillation" }
+    }
+
+    // Success - store and return the distilled DOM
+    capturedData.html = JSON.stringify(response.data) // Store as JSON string
+    capturedData.url = tab.url || null
+    capturedData.timestamp = Date.now()
+    console.log("Successfully captured distilled DOM:", { 
+      elementCount: response.data?.elements?.length || 0,
+      url: tab.url,
+      hasElements: Array.isArray(response.data?.elements)
+    })
+    return { success: true, data: { distilledDOM: response.data, url: tab.url } }
   } catch (error) {
     console.error("Exception in handleGetHtml:", error)
     // Return success with null distilledDOM instead of failing completely

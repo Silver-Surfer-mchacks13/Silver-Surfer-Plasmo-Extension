@@ -544,6 +544,14 @@ function extractElementInfo(element: Element, index: number): DOMElement {
  */
 export function distillDOM(): { success: boolean; message: string; data?: DistilledDOM } {
   try {
+    // Ensure document is ready
+    if (!document || !document.documentElement) {
+      return {
+        success: false,
+        message: "Document not ready"
+      }
+    }
+
     // Get meta description
     const metaDesc = document.querySelector('meta[name="description"]') as HTMLMetaElement
     
@@ -552,32 +560,37 @@ export function distillDOM(): { success: boolean; message: string; data?: Distil
       const body = document.body
       if (!body) return ""
       
-      // Clone the body to avoid modifying the actual DOM
-      const clone = body.cloneNode(true) as HTMLElement
-      
-      // Remove script, style, and other non-content elements
-      const removeSelectors = ["script", "style", "noscript", "svg", "iframe", "template"]
-      removeSelectors.forEach(sel => {
-        clone.querySelectorAll(sel).forEach(el => el.remove())
-      })
-      
-      // Get text content and clean it up
-      const text = clone.textContent || ""
-      return text
-        .replace(/\s+/g, " ")  // Collapse whitespace
-        .replace(/\n\s*\n/g, "\n")  // Remove empty lines
-        .trim()
+      try {
+        // Clone the body to avoid modifying the actual DOM
+        const clone = body.cloneNode(true) as HTMLElement
+        
+        // Remove script, style, and other non-content elements
+        const removeSelectors = ["script", "style", "noscript", "svg", "iframe", "template"]
+        removeSelectors.forEach(sel => {
+          clone.querySelectorAll(sel).forEach(el => el.remove())
+        })
+        
+        // Get text content and clean it up
+        const text = clone.textContent || ""
+        return text
+          .replace(/\s+/g, " ")  // Collapse whitespace
+          .replace(/\n\s*\n/g, "\n")  // Remove empty lines
+          .trim()
+      } catch (error) {
+        console.warn("Error extracting full text:", error)
+        return body.textContent || ""
+      }
     }
     
     const distilled: DistilledDOM = {
       url: window.location.href,
-      title: document.title,
+      title: document.title || "",
       metaDescription: metaDesc?.content || null,
       fullText: extractFullText(),
       timestamp: new Date().toISOString(),
       viewport: {
-        width: window.innerWidth,
-        height: window.innerHeight
+        width: window.innerWidth || 0,
+        height: window.innerHeight || 0
       },
       summary: {
         totalElements: 0,
@@ -625,39 +638,63 @@ export function distillDOM(): { success: boolean; message: string; data?: Distil
 
     let index = 0
     for (const element of sortedElements) {
-      // Skip duplicates
-      if (seenElements.has(element)) continue
-      seenElements.add(element)
+      try {
+        // Skip duplicates
+        if (seenElements.has(element)) continue
+        seenElements.add(element)
 
-      // Skip hidden elements
-      if (!isElementVisible(element)) continue
+        // Skip hidden elements
+        if (!isElementVisible(element)) continue
 
-      // Extract element info
-      const info = extractElementInfo(element, index)
-      distilled.elements.push(info)
-      index++
+        // Extract element info
+        const info = extractElementInfo(element, index)
+        if (info) {
+          distilled.elements.push(info)
+          index++
 
-      // Update summary counts
-      const tag = element.tagName.toLowerCase()
-      if (["h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
-        distilled.summary.headings++
-      } else if (tag === "a") {
-        distilled.summary.links++
-      } else if (tag === "button" || element.getAttribute("role") === "button" || 
-                 (tag === "input" && ["submit", "button"].includes((element as HTMLInputElement).type))) {
-        distilled.summary.buttons++
-      } else if (["input", "textarea", "select"].includes(tag)) {
-        distilled.summary.inputs++
-      } else if (tag === "img") {
-        distilled.summary.images++
-      }
+          // Update summary counts
+          const tag = element.tagName.toLowerCase()
+          if (["h1", "h2", "h3", "h4", "h5", "h6"].includes(tag)) {
+            distilled.summary.headings++
+          } else if (tag === "a") {
+            distilled.summary.links++
+          } else if (tag === "button" || element.getAttribute("role") === "button" || 
+                     (tag === "input" && ["submit", "button"].includes((element as HTMLInputElement).type))) {
+            distilled.summary.buttons++
+          } else if (["input", "textarea", "select"].includes(tag)) {
+            distilled.summary.inputs++
+          } else if (tag === "img") {
+            distilled.summary.images++
+          }
 
-      if (info.isInteractive) {
-        distilled.summary.interactiveElements++
+          if (info.isInteractive) {
+            distilled.summary.interactiveElements++
+          }
+        }
+      } catch (elementError) {
+        // Log but continue processing other elements
+        console.warn("Error processing element:", elementError, element)
+        continue
       }
     }
 
     distilled.summary.totalElements = distilled.elements.length
+
+    // Ensure we always return a valid data object
+    if (!distilled || typeof distilled !== 'object') {
+      console.error("Invalid distilled object created:", distilled)
+      return {
+        success: false,
+        message: "Failed to create distilled DOM object"
+      }
+    }
+
+    // Ensure elements is always an array
+    if (!Array.isArray(distilled.elements)) {
+      console.error("Elements is not an array:", distilled.elements)
+      distilled.elements = []
+      distilled.summary.totalElements = 0
+    }
 
     return { 
       success: true, 
@@ -665,6 +702,7 @@ export function distillDOM(): { success: boolean; message: string; data?: Distil
       data: distilled 
     }
   } catch (error) {
+    console.error("Error in distillDOM:", error)
     return { 
       success: false, 
       message: error instanceof Error ? error.message : "Failed to distill DOM" 
