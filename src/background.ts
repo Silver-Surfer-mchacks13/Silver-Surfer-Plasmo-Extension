@@ -136,36 +136,36 @@ async function handleGetHtml() {
       return { success: false, error: "No active tab found" }
     }
 
-    // Send message to content script to extract HTML
+    // Send message to content script to get distilled DOM (structured page content)
     const response = await chrome.tabs.sendMessage(tab.id, {
-      action: "EXTRACT_HTML"
+      action: "DISTILL_DOM"
     })
 
-    if (response?.html) {
-      capturedData.html = response.html
+    if (response?.success && response?.data) {
+      capturedData.html = JSON.stringify(response.data) // Store as JSON string
       capturedData.url = tab.url || null
       capturedData.timestamp = Date.now()
-      return { success: true, data: { html: response.html, url: tab.url } }
+      return { success: true, data: { distilledDOM: response.data, url: tab.url } }
     }
 
-    return { success: false, error: "No HTML received" }
+    return { success: false, error: response?.message || "DOM distillation failed" }
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "HTML extraction failed"
+      error: error instanceof Error ? error.message : "DOM distillation failed"
     }
   }
 }
 
 async function handleCaptureAll() {
   const screenshotResult = await handleScreenshotCapture()
-  const htmlResult = await handleGetHtml()
+  const domResult = await handleGetHtml()
 
   return {
     success: true,
     data: {
       screenshot: capturedData.screenshot,
-      html: capturedData.html,
+      distilledDOM: domResult.success ? domResult.data?.distilledDOM : null,
       url: capturedData.url,
       timestamp: capturedData.timestamp
     }

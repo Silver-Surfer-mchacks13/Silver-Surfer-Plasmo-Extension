@@ -15,11 +15,29 @@ function ActionBadge({ action }: { action: ConversationAction }) {
       case "click":
         return { icon: "touch_app", label: "Click", color: "bg-orange-100 dark:bg-orange-900" }
       case "wait":
-        return { icon: "hourglass_empty", label: `Wait ${action.duration}s`, color: "bg-purple-100 dark:bg-purple-900" }
+        return { icon: "hourglass_empty", label: `Wait ${action.duration}ms`, color: "bg-purple-100 dark:bg-purple-900" }
       case "message":
         return { icon: "chat", label: "Message", color: "bg-blue-100 dark:bg-blue-900" }
       case "complete":
         return { icon: "check_circle", label: "Complete", color: "bg-green-100 dark:bg-green-900" }
+      case "highlight":
+        return { icon: "highlight", label: "Highlight", color: "bg-yellow-100 dark:bg-yellow-900" }
+      case "remove_highlights":
+        return { icon: "visibility_off", label: "Clear Highlights", color: "bg-gray-100 dark:bg-gray-700" }
+      case "magnify":
+        return { icon: "zoom_in", label: "Magnify", color: "bg-indigo-100 dark:bg-indigo-900" }
+      case "reset_magnification":
+        return { icon: "zoom_out", label: "Reset Zoom", color: "bg-gray-100 dark:bg-gray-700" }
+      case "scroll":
+        return { icon: "swap_vert", label: "Scroll", color: "bg-cyan-100 dark:bg-cyan-900" }
+      case "fill_form":
+        return { icon: "edit", label: "Fill Form", color: "bg-teal-100 dark:bg-teal-900" }
+      case "select_dropdown":
+        return { icon: "arrow_drop_down_circle", label: "Select", color: "bg-pink-100 dark:bg-pink-900" }
+      case "remove_clutter":
+        return { icon: "cleaning_services", label: "Clean Page", color: "bg-lime-100 dark:bg-lime-900" }
+      case "restore_clutter":
+        return { icon: "restore", label: "Restore", color: "bg-gray-100 dark:bg-gray-700" }
       default:
         return { icon: "help", label: "Unknown", color: "bg-gray-100 dark:bg-gray-700" }
     }
@@ -33,6 +51,93 @@ function ActionBadge({ action }: { action: ConversationAction }) {
       {label}
     </span>
   )
+}
+
+// Execute an action on the current page via content script
+async function executeAction(action: ConversationAction): Promise<{ success: boolean; message?: string }> {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const tabId = tabs[0]?.id
+      if (!tabId) {
+        resolve({ success: false, message: "No active tab" })
+        return
+      }
+
+      let messageAction: string
+      let messagePayload: Record<string, unknown> = {}
+
+      switch (action.action_type) {
+        case "click":
+          messageAction = "CLICK_ELEMENT"
+          messagePayload = { selector: action.x_path }
+          break
+        case "highlight":
+          messageAction = "HIGHLIGHT_ELEMENT"
+          messagePayload = { selector: action.selector }
+          break
+        case "remove_highlights":
+          messageAction = "REMOVE_HIGHLIGHTS"
+          break
+        case "magnify":
+          messageAction = "MAGNIFY_TEXT"
+          messagePayload = { selector: action.selector, scaleFactor: action.scale_factor || 1.3 }
+          break
+        case "reset_magnification":
+          messageAction = "RESET_MAGNIFICATION"
+          break
+        case "scroll":
+          messageAction = "SCROLL_TO_VIEW"
+          messagePayload = { selector: action.selector }
+          break
+        case "fill_form":
+          messageAction = "FILL_FORM_FIELD"
+          messagePayload = { selector: action.selector, value: action.value }
+          break
+        case "select_dropdown":
+          messageAction = "SELECT_DROPDOWN"
+          messagePayload = { selector: action.selector, value: action.value }
+          break
+        case "remove_clutter":
+          messageAction = "REMOVE_CLUTTER"
+          break
+        case "restore_clutter":
+          messageAction = "RESTORE_CLUTTER"
+          break
+        case "wait":
+          // Handle wait locally
+          await new Promise((r) => setTimeout(r, action.duration))
+          resolve({ success: true, message: `Waited ${action.duration}ms` })
+          return
+        case "message":
+        case "complete":
+          // These don't need page execution
+          resolve({ success: true })
+          return
+        default:
+          resolve({ success: false, message: "Unknown action type" })
+          return
+      }
+
+      chrome.tabs.sendMessage(tabId, { action: messageAction, ...messagePayload }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, message: chrome.runtime.lastError.message })
+        } else {
+          resolve(response || { success: true })
+        }
+      })
+    })
+  })
+}
+
+// Execute all actions sequentially
+async function executeActions(actions: ConversationAction[]): Promise<void> {
+  for (const action of actions) {
+    await executeAction(action)
+    // Small delay between actions for visual feedback
+    if (action.action_type !== "wait") {
+      await new Promise((r) => setTimeout(r, 200))
+    }
+  }
 }
 
 function AssistantMessage({ message }: { message: ChatMessage }) {
@@ -110,6 +215,149 @@ export default function ChatTab() {
     scrollToBottom()
   }, [chatState.messages])
 
+  // Maximum number of agent loop iterations to prevent infinite loops
+  const MAX_ITERATIONS = 10
+
+  // Process a single API response and execute actions
+  const processAgentResponse = async (
+    response: { success: boolean; data?: any; error?: string },
+    currentSessionId: string | null,
+    originalMessage: string,
+    iteration: number
+  ): Promise<void> => {
+    if (!response.success || !response.data) {
+      const errorContent = typeof response.error === "string"
+        ? response.error
+        : "Sorry, something went wrong. Please try again."
+
+      const errorMessage: ChatMessage = {
+        id: generateId(),
+        role: "assistant",
+        content: errorContent,
+        timestamp: new Date()
+      }
+
+      setChatState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, errorMessage],
+        isProcessing: false
+      }))
+      return
+    }
+
+    const { session_id, actions, complete, needs_observation } = response.data
+
+    // Extract messages from actions
+    const messageActions = actions.filter(
+      (a: ConversationAction) => a.action_type === "message" || a.action_type === "complete"
+    )
+
+    // Get non-message actions to execute on the page
+    const executableActions = actions.filter(
+      (a: ConversationAction) => a.action_type !== "message" && a.action_type !== "complete"
+    )
+
+    // Create assistant messages
+    const assistantMessages: ChatMessage[] = messageActions.map((action: ConversationAction) => ({
+      id: generateId(),
+      role: "assistant" as const,
+      content: action.action_type === "message" || action.action_type === "complete"
+        ? (action as any).message
+        : "",
+      timestamp: new Date((action as any).timestamp),
+      actions: executableActions.length > 0 ? executableActions : undefined
+    }))
+
+    // If no message actions but we have executable actions, create a status message
+    if (assistantMessages.length === 0 && executableActions.length > 0) {
+      assistantMessages.push({
+        id: generateId(),
+        role: "assistant",
+        content: `Executing ${executableActions.length} action(s)...`,
+        timestamp: new Date(),
+        actions: executableActions
+      })
+    }
+
+    // Update UI with messages
+    if (assistantMessages.length > 0) {
+      setChatState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, ...assistantMessages],
+        sessionId: session_id
+      }))
+    }
+
+    // Execute page actions
+    if (executableActions.length > 0) {
+      await executeActions(executableActions)
+    }
+
+    // If the agent wants to observe the page after actions and we haven't hit max iterations
+    if (needs_observation && !complete && iteration < MAX_ITERATIONS) {
+      // Wait for page to update after actions
+      await new Promise((r) => setTimeout(r, 1000))
+
+      // Capture new page state
+      const newPageData = await getCurrentPageState()
+
+      if (newPageData) {
+        // Add a thinking indicator
+        setChatState((prev) => ({
+          ...prev,
+          messages: [...prev.messages, {
+            id: generateId(),
+            role: "assistant",
+            content: "Observing the page...",
+            timestamp: new Date()
+          }]
+        }))
+
+        // Send observation to agent (use special message format)
+        const observationResponse = await sendConversationMessage(
+          `[OBSERVATION] Continuing task: ${originalMessage}`,
+          session_id,
+          newPageData.pageState,
+          newPageData.title
+        )
+
+        // Recursively process the next response
+        await processAgentResponse(
+          observationResponse,
+          session_id,
+          originalMessage,
+          iteration + 1
+        )
+      } else {
+        // Couldn't capture page state, mark as done
+        setChatState((prev) => ({
+          ...prev,
+          isProcessing: false,
+          isComplete: true
+        }))
+      }
+    } else {
+      // Task complete or max iterations reached
+      setChatState((prev) => ({
+        ...prev,
+        isProcessing: false,
+        isComplete: complete || iteration >= MAX_ITERATIONS
+      }))
+
+      if (iteration >= MAX_ITERATIONS) {
+        setChatState((prev) => ({
+          ...prev,
+          messages: [...prev.messages, {
+            id: generateId(),
+            role: "assistant",
+            content: "I've reached the maximum number of steps. Please review what's been done and let me know if you need further assistance.",
+            timestamp: new Date()
+          }]
+        }))
+      }
+    }
+  }
+
   const handleSendMessage = async () => {
     const trimmedInput = inputValue.trim()
     if (!trimmedInput || chatState.isProcessing) return
@@ -125,7 +373,8 @@ export default function ChatTab() {
     setChatState((prev) => ({
       ...prev,
       messages: [...prev.messages, userMessage],
-      isProcessing: true
+      isProcessing: true,
+      isComplete: false
     }))
     setInputValue("")
 
@@ -141,65 +390,11 @@ export default function ChatTab() {
         pageData?.title
       )
 
-      if (!response.success || !response.data) {
-        // Add error message - ensure content is always a string
-        const errorContent = typeof response.error === "string" 
-          ? response.error 
-          : "Sorry, something went wrong. Please try again."
-        
-        const errorMessage: ChatMessage = {
-          id: generateId(),
-          role: "assistant",
-          content: errorContent,
-          timestamp: new Date()
-        }
+      // Process the response (may recurse for multi-step tasks)
+      await processAgentResponse(response, chatState.sessionId, trimmedInput, 0)
 
-        setChatState((prev) => ({
-          ...prev,
-          messages: [...prev.messages, errorMessage],
-          isProcessing: false
-        }))
-        return
-      }
-
-      // Process actions from response
-      const { session_id, actions, complete } = response.data
-
-      // Extract messages from actions
-      const messageActions = actions.filter(
-        (a) => a.action_type === "message" || a.action_type === "complete"
-      )
-
-      // Create assistant messages
-      const assistantMessages: ChatMessage[] = messageActions.map((action) => ({
-        id: generateId(),
-        role: "assistant" as const,
-        content: action.action_type === "message" || action.action_type === "complete" 
-          ? action.message 
-          : "",
-        timestamp: new Date(action.timestamp),
-        actions: actions.filter((a) => a.action_type !== "message" && a.action_type !== "complete")
-      }))
-
-      // If no message actions, create a summary message showing what actions were taken
-      if (assistantMessages.length === 0 && actions.length > 0) {
-        assistantMessages.push({
-          id: generateId(),
-          role: "assistant",
-          content: "I'm working on your request...",
-          timestamp: new Date(),
-          actions
-        })
-      }
-
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, ...assistantMessages],
-        sessionId: session_id,
-        isProcessing: false,
-        isComplete: complete
-      }))
     } catch (error) {
+      console.error("Error in handleSendMessage:", error)
       const errorMessage: ChatMessage = {
         id: generateId(),
         role: "assistant",
