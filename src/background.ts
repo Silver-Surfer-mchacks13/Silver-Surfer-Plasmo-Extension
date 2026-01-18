@@ -396,19 +396,33 @@ async function handleScreenshotCapture() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (!tab?.id) {
+      console.error("Screenshot: No active tab found")
       return { success: false, error: "No active tab found" }
     }
 
+    if (!tab.windowId) {
+      console.error("Screenshot: Tab has no windowId")
+      return { success: false, error: "Tab has no window ID" }
+    }
+
+    console.log("Capturing screenshot for tab:", tab.id, "window:", tab.windowId)
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
       format: "png"
     })
 
+    if (!dataUrl || dataUrl.length === 0) {
+      console.error("Screenshot: Empty data URL returned")
+      return { success: false, error: "Screenshot returned empty data" }
+    }
+
+    console.log("Screenshot captured successfully, length:", dataUrl.length)
     capturedData.screenshot = dataUrl
     capturedData.url = tab.url || null
     capturedData.timestamp = Date.now()
 
     return { success: true, data: { screenshot: dataUrl, url: tab.url } }
   } catch (error) {
+    console.error("Screenshot capture error:", error)
     return {
       success: false,
       error: error instanceof Error ? error.message : "Screenshot failed"
@@ -429,82 +443,202 @@ async function handleGetHtml() {
       url.startsWith("moz-extension://") || url.startsWith("about:") ||
       url.startsWith("edge://")) {
       console.warn("Content scripts not available on this page type:", url)
-      return { success: true, data: { distilledDOM: null, url: tab.url } }
+      return { success: false, error: "Content scripts not available on this page type" }
     }
 
-    // Try to send message to content script
+    // First, try to send message to content script (if it's already loaded)
     let response
     try {
       response = await chrome.tabs.sendMessage(tab.id, {
         action: "DISTILL_DOM"
       })
-    } catch (sendError) {
-      // If sendMessage throws, content script likely not loaded
-      console.warn("Content script not loaded, returning null for distilledDOM:", sendError)
-      return { success: true, data: { distilledDOM: null, url: tab.url } }
-    }
-
-    // Check for runtime errors (content script not available)
-    if (chrome.runtime.lastError) {
-      const errorMsg = chrome.runtime.lastError.message
-      if (errorMsg?.includes("Receiving end does not exist") ||
-        errorMsg?.includes("Could not establish connection")) {
-        console.warn("Content script not available on this page, returning null for distilledDOM")
-        return { success: true, data: { distilledDOM: null, url: tab.url } }
+      
+      // Check for runtime errors
+      if (chrome.runtime.lastError) {
+        const errorMsg = chrome.runtime.lastError.message
+        if (errorMsg?.includes("Receiving end does not exist") ||
+            errorMsg?.includes("Could not establish connection")) {
+          // Content script not ready, fall through to executeScript
+          console.log("Content script not ready, using executeScript fallback")
+          response = null
+        } else {
+          console.error("Error sending message to content script:", errorMsg)
+          return { success: false, error: errorMsg || "Failed to communicate with content script" }
+        }
       }
-      console.error("Error sending message to content script:", errorMsg)
-      return { success: false, error: errorMsg || "Failed to communicate with content script" }
+    } catch (sendError) {
+      // Content script not loaded, fall through to executeScript
+      console.log("Content script not loaded, using executeScript fallback:", sendError)
+      response = null
     }
 
-    // Log the full response for debugging
-    console.log("DISTILL_DOM response received:", {
-      hasResponse: !!response,
-      success: response?.success,
-      hasData: !!response?.data,
-      message: response?.message,
-      dataType: typeof response?.data,
-      elementCount: response?.data?.elements?.length
-    })
-
-    // Check if response is valid
+    // If sendMessage failed, use executeScript as fallback
     if (!response) {
-      console.error("No response received from content script")
-      return { success: false, error: "No response from content script" }
+      try {
+        // Use executeScript to directly inject and run the distillation code
+        // NOTE: This must be plain JavaScript, no TypeScript syntax!
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // Plain JavaScript distillation function
+            try {
+              const metaDesc = document.querySelector('meta[name="description"]')
+              
+              function extractFullText() {
+                const body = document.body
+                if (!body) return ""
+                const clone = body.cloneNode(true)
+                const removeSelectors = ["script", "style", "noscript", "svg", "iframe", "template"]
+                removeSelectors.forEach(function(sel) {
+                  clone.querySelectorAll(sel).forEach(function(el) { el.remove() })
+                })
+                const text = clone.textContent || ""
+                return text.replace(/\s+/g, " ").replace(/\n\s*\n/g, "\n").trim()
+              }
+              
+              function isElementVisible(el) {
+                const style = window.getComputedStyle(el)
+                if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false
+                const rect = el.getBoundingClientRect()
+                return rect.width > 0 && rect.height > 0
+              }
+              
+              function generateSelector(el) {
+                if (el.id) return "#" + el.id
+                let selector = el.tagName.toLowerCase()
+                if (el.className) {
+                  const classes = el.className.toString().split(/\s+/).filter(function(c) { return c }).slice(0, 3).join('.')
+                  if (classes) selector += "." + classes
+                }
+                return selector
+              }
+              
+              function extractElementInfo(element, index) {
+                const info = {
+                  index: index,
+                  selector: generateSelector(element),
+                  tag: element.tagName.toLowerCase(),
+                  isVisible: isElementVisible(element),
+                  isInteractive: ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA"].indexOf(element.tagName) !== -1 ||
+                                 element.getAttribute("role") === "button" ||
+                                 element.hasAttribute("tabindex")
+                }
+                
+                const directText = Array.from(element.childNodes)
+                  .filter(function(n) { return n.nodeType === Node.TEXT_NODE })
+                  .map(function(n) { return n.textContent ? n.textContent.trim() : "" })
+                  .filter(Boolean)
+                  .join(" ")
+                info.text = (directText || element.textContent || "").substring(0, 100)
+                
+                if (element.type) info.type = element.type
+                const role = element.getAttribute("role")
+                if (role) info.role = role
+                if (element.placeholder) info.placeholder = element.placeholder
+                if (element.value && element.type !== "password") {
+                  info.value = element.value.substring(0, 50)
+                }
+                const href = element.getAttribute("href")
+                if (href && href.indexOf("javascript:") !== 0) info.href = href.substring(0, 80)
+                if (element.src) info.src = element.src.substring(0, 80)
+                if (element.alt) info.alt = element.alt.substring(0, 80)
+                const ariaLabel = element.getAttribute("aria-label")
+                if (ariaLabel) info.ariaLabel = ariaLabel.substring(0, 100)
+                
+                return info
+              }
+              
+              const relevantSelector = [
+                "h1", "h2", "h3", "h4", "h5", "h6", "p", "a[href]",
+                "button", "[role='button']", "input[type='submit']", "input[type='button']",
+                "input:not([type='hidden'])", "textarea", "select",
+                "img[alt]", "img[src]", "nav", "[role='navigation']",
+                "main", "article", "[role='main']", "form",
+                "header", "footer", "aside", "[role='banner']", "[role='search']", "[role='contentinfo']",
+                "label", "ul", "ol", "table"
+              ].join(", ")
+              
+              const allElements = document.querySelectorAll(relevantSelector)
+              const seenElements = new Set()
+              const sortedElements = Array.from(allElements).sort(function(a, b) {
+                const position = a.compareDocumentPosition(b)
+                if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1
+                if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1
+                return 0
+              })
+              
+              const elements = []
+              let index = 0
+              const summary = { totalElements: 0, interactiveElements: 0, headings: 0, links: 0, buttons: 0, inputs: 0, images: 0 }
+              
+              for (let i = 0; i < sortedElements.length; i++) {
+                const element = sortedElements[i]
+                if (seenElements.has(element)) continue
+                seenElements.add(element)
+                if (!isElementVisible(element)) continue
+                
+                const info = extractElementInfo(element, index)
+                elements.push(info)
+                index++
+                
+                const tag = element.tagName.toLowerCase()
+                if (["h1", "h2", "h3", "h4", "h5", "h6"].indexOf(tag) !== -1) summary.headings++
+                else if (tag === "a") summary.links++
+                else if (tag === "button" || element.getAttribute("role") === "button") summary.buttons++
+                else if (["input", "textarea", "select"].indexOf(tag) !== -1) summary.inputs++
+                else if (tag === "img") summary.images++
+                if (info.isInteractive) summary.interactiveElements++
+              }
+              
+              summary.totalElements = elements.length
+              
+              return {
+                success: true,
+                message: "Distilled " + summary.totalElements + " elements",
+                data: {
+                  url: window.location.href,
+                  title: document.title,
+                  metaDescription: metaDesc ? metaDesc.content : null,
+                  fullText: extractFullText(),
+                  timestamp: new Date().toISOString(),
+                  viewport: { width: window.innerWidth, height: window.innerHeight },
+                  summary: summary,
+                  elements: elements
+                }
+              }
+            } catch (error) {
+              return {
+                success: false,
+                message: error ? (error.message || String(error)) : "Failed to distill DOM"
+              }
+            }
+          }
+        })
+        
+        if (results && results[0]?.result) {
+          response = results[0].result
+        } else {
+          return { success: false, error: "executeScript returned no result" }
+        }
+      } catch (scriptError) {
+        console.error("executeScript failed:", scriptError)
+        return { success: false, error: scriptError instanceof Error ? scriptError.message : "Failed to execute script" }
+      }
     }
 
-    // Check if distillation was successful
-    if (response.success === false) {
-      console.error("DOM distillation failed:", response.message || "Unknown error", response)
-      return { success: false, error: response.message || "DOM distillation failed" }
+    if (response?.success && response?.data) {
+      capturedData.html = JSON.stringify(response.data)
+      capturedData.url = tab.url || null
+      capturedData.timestamp = Date.now()
+      console.log("Successfully captured distilled DOM:", { elementCount: response.data?.elements?.length || 0 })
+      return { success: true, data: { distilledDOM: response.data, url: tab.url } }
     }
 
-    // Check if we have data
-    if (!response.data) {
-      console.error("DOM distillation succeeded but no data returned:", response)
-      return { success: false, error: "Distillation succeeded but returned no data" }
-    }
-
-    // Validate that data has the expected structure
-    if (typeof response.data !== 'object' || response.data === null) {
-      console.error("DOM distillation data is not an object:", typeof response.data, response.data)
-      return { success: false, error: "Invalid data structure returned from distillation" }
-    }
-
-    // Success - store and return the distilled DOM
-    capturedData.html = JSON.stringify(response.data) // Store as JSON string
-    capturedData.url = tab.url || null
-    capturedData.timestamp = Date.now()
-    console.log("Successfully captured distilled DOM:", { 
-      elementCount: response.data?.elements?.length || 0,
-      url: tab.url,
-      hasElements: Array.isArray(response.data?.elements)
-    })
-    return { success: true, data: { distilledDOM: response.data, url: tab.url } }
+    console.error("DOM distillation failed:", response?.message || "Unknown error", response)
+    return { success: false, error: response?.message || "DOM distillation failed" }
   } catch (error) {
     console.error("Exception in handleGetHtml:", error)
-    // Return success with null distilledDOM instead of failing completely
-    // This allows the request to proceed without distilledDOM
-    return { success: true, data: { distilledDOM: null, url: null } }
+    return { success: false, error: error instanceof Error ? error.message : "Failed to get HTML" }
   }
 }
 
@@ -514,17 +648,43 @@ async function handleCaptureAll() {
 
   console.log("handleCaptureAll results:", {
     screenshotSuccess: screenshotResult.success,
+    screenshotHasData: !!screenshotResult.data?.screenshot,
+    screenshotLength: screenshotResult.data?.screenshot?.length || 0,
     domSuccess: domResult.success,
     hasDistilledDOM: !!domResult.data?.distilledDOM,
-    distilledDOMType: typeof domResult.data?.distilledDOM
+    distilledDOMType: typeof domResult.data?.distilledDOM,
+    elementCount: domResult.data?.distilledDOM?.elements?.length || 0
   })
+
+  // Use fresh data from function results, not stale capturedData
+  const screenshot = screenshotResult.success && screenshotResult.data?.screenshot
+    ? screenshotResult.data.screenshot
+    : ""
+
+  const distilledDOM = domResult.success && domResult.data?.distilledDOM
+    ? domResult.data.distilledDOM
+    : null
+
+  const url = domResult.data?.url || screenshotResult.data?.url || capturedData.url || null
+
+  // Update capturedData for consistency
+  if (screenshot) {
+    capturedData.screenshot = screenshot
+  }
+  if (url) {
+    capturedData.url = url
+  }
+  capturedData.timestamp = Date.now()
+  if (distilledDOM) {
+    capturedData.html = JSON.stringify(distilledDOM)
+  }
 
   return {
     success: true,
     data: {
-      screenshot: capturedData.screenshot,
-      distilledDOM: domResult.success ? domResult.data?.distilledDOM : null,
-      url: capturedData.url,
+      screenshot: screenshot,
+      distilledDOM: distilledDOM,
+      url: url,
       timestamp: capturedData.timestamp
     }
   }

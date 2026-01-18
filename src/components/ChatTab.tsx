@@ -68,14 +68,33 @@ function ActionBadge({ action }: { action: ConversationAction }) {
 
 // Execute an action on the current page via content script
 async function executeAction(action: ConversationAction): Promise<{ success: boolean; message?: string }> {
-  return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      const tabId = tabs[0]?.id
-      if (!tabId) {
-        resolve({ success: false, message: "No active tab" })
-        return
-      }
+  return new Promise(async (resolve) => {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    const tabId = tabs[0]?.id
+    if (!tabId) {
+      resolve({ success: false, message: "No active tab" })
+      return
+    }
 
+    // Handle actions that don't need page execution
+    if (action.action_type === "wait") {
+      await new Promise((r) => setTimeout(r, action.duration))
+      resolve({ success: true, message: `Waited ${action.duration}ms` })
+      return
+    }
+
+    if (action.action_type === "message" || action.action_type === "complete") {
+      resolve({ success: true })
+      return
+    }
+
+    // Store action parameters for fallback
+    const selector = action.x_path || action.selector
+    const value = action.value
+    const scaleFactor = action.scale_factor || 1.3
+
+    // Try sendMessage first (if content script is ready)
+    try {
       let messageAction: string
       let messagePayload: Record<string, unknown> = {}
 
@@ -116,29 +135,183 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
         case "restore_clutter":
           messageAction = "RESTORE_CLUTTER"
           break
-        case "wait":
-          // Handle wait locally
-          await new Promise((r) => setTimeout(r, action.duration))
-          resolve({ success: true, message: `Waited ${action.duration}ms` })
-          return
-        case "message":
-        case "complete":
-          // These don't need page execution
-          resolve({ success: true })
-          return
-        default:
-          resolve({ success: false, message: "Unknown action type" })
-          return
       }
 
       chrome.tabs.sendMessage(tabId, { action: messageAction, ...messagePayload }, (response) => {
         if (chrome.runtime.lastError) {
-          resolve({ success: false, message: chrome.runtime.lastError.message })
+          const errorMsg = chrome.runtime.lastError.message
+          if (errorMsg?.includes("Receiving end does not exist") ||
+              errorMsg?.includes("Could not establish connection")) {
+            // Content script not ready, fall back to executeScript
+            console.log("Content script not ready for action, using executeScript fallback")
+            fallbackToExecuteScript()
+          } else {
+            resolve({ success: false, message: errorMsg || "Failed to execute action" })
+          }
         } else {
           resolve(response || { success: true })
         }
       })
-    })
+    } catch (sendError) {
+      // Content script not loaded, fall back to executeScript
+      console.log("Content script not loaded for action, using executeScript fallback:", sendError)
+      fallbackToExecuteScript()
+    }
+
+    // Fallback function using executeScript (plain JavaScript only!)
+    async function fallbackToExecuteScript() {
+      try {
+        // Create plain JavaScript function based on action type (NO TypeScript syntax!)
+        let executeFunc: any
+        let args: any[] = []
+        
+        switch (action.action_type) {
+          case "click":
+            executeFunc = function(sel) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              const el = element
+              const unsafePatterns = [
+                /pay/i, /purchase/i, /buy/i, /checkout/i, /order/i,
+                /confirm/i, /submit.*order/i, /complete.*purchase/i,
+                /delete/i, /remove/i, /cancel.*subscription/i,
+                /sign.*out/i, /log.*out/i, /disconnect/i,
+                /unsubscribe/i, /deactivate/i
+              ]
+              const text = ((el.textContent || "") + (el.value || "") + (el.getAttribute("aria-label") || "")).toLowerCase()
+              for (let i = 0; i < unsafePatterns.length; i++) {
+                if (unsafePatterns[i].test(text)) {
+                  return { success: false, message: "Blocked: This appears to be a sensitive action. Please click manually." }
+                }
+              }
+              el.click()
+              return { success: true, message: "Clicked element: " + sel }
+            }
+            args = [selector]
+            break
+          case "highlight":
+            executeFunc = function(sel) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              element.setAttribute("data-silver-surfer-highlight", "true")
+              element.style.setProperty("outline", "4px solid #000", "important")
+              element.style.setProperty("outline-offset", "2px", "important")
+              element.style.setProperty("box-shadow", "6px 6px 0 0 #3b82f6", "important")
+              return { success: true, message: "Highlighted element: " + sel }
+            }
+            args = [selector]
+            break
+          case "remove_highlights":
+            executeFunc = function() {
+              document.querySelectorAll("[data-silver-surfer-highlight]").forEach(function(el) {
+                el.removeAttribute("data-silver-surfer-highlight")
+                el.style.removeProperty("outline")
+                el.style.removeProperty("outline-offset")
+                el.style.removeProperty("box-shadow")
+              })
+              return { success: true, message: "Removed all highlights" }
+            }
+            break
+          case "magnify":
+            executeFunc = function(sel, scale) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              const scaleVal = scale || 1.3
+              element.style.setProperty("font-size", (scaleVal * 100) + "%", "important")
+              element.style.setProperty("transform", "scale(" + scaleVal + ")", "important")
+              return { success: true, message: "Magnified element: " + sel }
+            }
+            args = [selector, scaleFactor]
+            break
+          case "reset_magnification":
+            executeFunc = function() {
+              document.querySelectorAll("[style*='font-size'], [style*='transform']").forEach(function(el) {
+                el.style.removeProperty("font-size")
+                el.style.removeProperty("transform")
+              })
+              return { success: true, message: "Reset magnification" }
+            }
+            break
+          case "scroll":
+            executeFunc = function(sel) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              element.scrollIntoView({ behavior: "smooth", block: "center" })
+              return { success: true, message: "Scrolled to element: " + sel }
+            }
+            args = [selector]
+            break
+          case "fill_form":
+            executeFunc = function(sel, val) {
+              const element = document.querySelector(sel)
+              if (!element) return { success: false, message: "Element not found: " + sel }
+              if (["INPUT", "TEXTAREA"].indexOf(element.tagName) === -1) {
+                return { success: false, message: "Element is not an input field: " + element.tagName }
+              }
+              const inputType = element.type || ""
+              if (["password", "credit-card"].indexOf(inputType) !== -1) {
+                return { success: false, message: "Blocked: Cannot auto-fill sensitive fields" }
+              }
+              element.focus()
+              element.value = val || ""
+              element.dispatchEvent(new Event("input", { bubbles: true }))
+              element.dispatchEvent(new Event("change", { bubbles: true }))
+              return { success: true, message: "Filled field: " + sel }
+            }
+            args = [selector, value]
+            break
+          case "select_dropdown":
+            executeFunc = function(sel, val) {
+              const element = document.querySelector(sel)
+              if (!element || element.tagName !== "SELECT") {
+                return { success: false, message: "Select element not found: " + sel }
+              }
+              element.value = val || ""
+              element.dispatchEvent(new Event("change", { bubbles: true }))
+              return { success: true, message: "Selected option: " + val }
+            }
+            args = [selector, value]
+            break
+          case "remove_clutter":
+            executeFunc = function() {
+              const clutterSelectors = ["aside", "nav", "footer", ".ad", ".advertisement", "[class*='ad-']"]
+              clutterSelectors.forEach(function(sel) {
+                document.querySelectorAll(sel).forEach(function(el) {
+                  el.style.setProperty("display", "none", "important")
+                })
+              })
+              return { success: true, message: "Removed clutter" }
+            }
+            break
+          case "restore_clutter":
+            executeFunc = function() {
+              document.querySelectorAll("[style*='display: none']").forEach(function(el) {
+                el.style.removeProperty("display")
+              })
+              return { success: true, message: "Restored clutter" }
+            }
+            break
+          default:
+            resolve({ success: false, message: "Unknown action type for fallback" })
+            return
+        }
+
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          func: executeFunc,
+          args: args
+        })
+
+        if (results && results[0]?.result) {
+          resolve(results[0].result)
+        } else {
+          resolve({ success: false, message: "Action execution returned no result" })
+        }
+      } catch (scriptError) {
+        console.error("executeScript failed for action:", scriptError)
+        resolve({ success: false, message: scriptError instanceof Error ? scriptError.message : "Failed to execute action" })
+      }
+    }
   })
 }
 
@@ -351,48 +524,85 @@ export default function ChatTab() {
       await executeActions(executableActions)
     }
 
-    // If the agent wants to observe the page after actions and we haven't hit max iterations
-    if (needs_observation && !complete && iteration < MAX_ITERATIONS) {
-      // Wait for page to update after actions
-      await new Promise((r) => setTimeout(r, 1000))
+    // If task is not complete and we haven't hit max iterations, continue
+    if (!complete && iteration < MAX_ITERATIONS) {
+      if (needs_observation) {
+        // Agent wants to observe the page after actions
+        // Wait for page to update after actions
+        await new Promise((r) => setTimeout(r, 1000))
 
-      // Capture new page state
-      const newPageData = await getCurrentPageState()
+        // Capture new page state
+        const newPageData = await getCurrentPageState()
 
-      if (newPageData) {
+        if (newPageData) {
+          // Add a thinking indicator
+          setChatState((prev) => ({
+            ...prev,
+            messages: [...prev.messages, {
+              id: generateId(),
+              role: "assistant",
+              content: "Observing the page...",
+              timestamp: new Date()
+            }]
+          }))
+
+          // Send observation to agent (use special message format)
+          const observationResponse = await sendConversationMessage(
+            `[OBSERVATION] Continuing task: ${originalMessage}`,
+            session_id,
+            newPageData.pageState,
+            newPageData.title
+          )
+
+          // Recursively process the next response
+          await processAgentResponse(
+            observationResponse,
+            session_id,
+            originalMessage,
+            iteration + 1
+          )
+        } else {
+          // Couldn't capture page state, mark as done
+          setChatState((prev) => ({
+            ...prev,
+            isProcessing: false,
+            isComplete: true
+          }))
+        }
+      } else {
+        // Agent wants to continue without observation - send continuation request with current page state
+        // Wait a bit for actions to complete
+        await new Promise((r) => setTimeout(r, 500))
+
         // Add a thinking indicator
         setChatState((prev) => ({
           ...prev,
           messages: [...prev.messages, {
             id: generateId(),
             role: "assistant",
-            content: "Observing the page...",
+            content: "Continuing...",
             timestamp: new Date()
           }]
         }))
 
-        // Send observation to agent (use special message format)
-        const observationResponse = await sendConversationMessage(
-          `[OBSERVATION] Continuing task: ${originalMessage}`,
+        // Get current page state (even though needs_observation is false, we still send it for context)
+        const currentPageData = await getCurrentPageState()
+
+        // Send continuation request to agent
+        const continuationResponse = await sendConversationMessage(
+          `[CONTINUE] Continuing task: ${originalMessage}`,
           session_id,
-          newPageData.pageState,
-          newPageData.title
+          currentPageData?.pageState || null,
+          currentPageData?.title || null
         )
 
         // Recursively process the next response
         await processAgentResponse(
-          observationResponse,
+          continuationResponse,
           session_id,
           originalMessage,
           iteration + 1
         )
-      } else {
-        // Couldn't capture page state, mark as done
-        setChatState((prev) => ({
-          ...prev,
-          isProcessing: false,
-          isComplete: true
-        }))
       }
     } else {
       // Task complete or max iterations reached
