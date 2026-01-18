@@ -18,6 +18,7 @@ type ChatThread = {
 const STORAGE_KEY = "silver_chat_threads"
 const ACTIVE_KEY = "silver_chat_active_thread"
 
+/* ------------------ storage helpers ------------------ */
 async function loadThreads(): Promise<ChatThread[]> {
   try {
     const res = await chrome.storage.local.get([STORAGE_KEY])
@@ -52,6 +53,70 @@ async function saveActiveThreadId(id: string) {
   }
 }
 
+/* ------------------ demo seeding (manual only) ------------------ */
+function uid(prefix = "id") {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`
+}
+
+function makeThread(
+  title: string,
+  baseTs: number,
+  lines: Array<[ChatMessage["role"], string]>
+): ChatThread {
+  const messages: ChatMessage[] = lines.map(([role, text], i) => ({
+    id: uid("msg"),
+    role,
+    text,
+    ts: baseTs + i * 60_000
+  }))
+
+  return {
+    id: uid("thread"),
+    title,
+    updatedAt: messages[messages.length - 1]?.ts ?? baseTs,
+    messages
+  }
+}
+
+function buildDemoThreads(): ChatThread[] {
+  const now = Date.now()
+
+  const t1 = makeThread("Make this page readable", now - 1000 * 60 * 60 * 18, [
+    ["assistant", "Greetings, Traveler! I’m your Silver Assistant. What do you need?"],
+    ["user", "Text is tiny. Make it bigger please."],
+    ["assistant", "Boosted by 20% ✅ Want more or reset?"],
+    ["user", "Highlight the headline too."],
+    ["assistant", "Highlighted `h1` ✅"],
+    ["user", "Remove clutter (ads/popups)."],
+    ["assistant", "Clutter removed ✅. I can restore if needed."]
+  ])
+
+  const t2 = makeThread("Checkout help", now - 1000 * 60 * 60 * 6, [
+    ["user", "I’m stuck on checkout."],
+    ["assistant", "Scrolling to form ✅"],
+    ["user", "It wants a phone number."],
+    ["assistant", "Send it and I’ll fill it."],
+    ["user", "5141234567"],
+    ["assistant", "Filled ✅ Click submit?"],
+    ["user", "Yes"],
+    ["assistant", "Clicked ✅"]
+  ])
+
+  const lines: Array<[ChatMessage["role"], string]> = [
+    ["assistant", "Scroll test time 😄"],
+    ["user", "Make it long please."],
+    ["assistant", "Done. This thread is just for scrollbar testing."]
+  ]
+  for (let i = 1; i <= 25; i++) {
+    lines.push(["user", `Dummy message #${i} — keep comic UI consistent.`])
+    lines.push(["assistant", `Reply #${i} — borders, shadows, bubbles ✅`])
+  }
+  const t3 = makeThread("Scrollbar Stress Test", now - 1000 * 60 * 60 * 2, lines)
+
+  return [t1, t2, t3].sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/* ------------------ component ------------------ */
 export default function TestTab() {
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -87,6 +152,13 @@ export default function TestTab() {
     setIsLoading(false)
   }
 
+  const seedDemo = async () => {
+    const demo = buildDemoThreads()
+    await saveThreads(demo)
+    await saveActiveThreadId(demo[0]?.id ?? "")
+    await refresh()
+  }
+
   const openClearDialog = () => {
     const map: Record<string, boolean> = {}
     for (const t of threads) map[t.id] = false
@@ -111,10 +183,9 @@ export default function TestTab() {
     const remaining = threads.filter((t) => !ids.includes(t.id))
     await saveThreads(remaining)
 
-    const nextActive =
-      remaining.some((t) => t.id === activeId) ? activeId : null
-
+    const nextActive = remaining.some((t) => t.id === activeId) ? activeId : null
     await saveActiveThreadId(nextActive ?? "")
+
     setClearOpen(false)
     await refresh()
   }
@@ -157,6 +228,13 @@ export default function TestTab() {
             className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-gray-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-slate-600 dark:text-white">
             <span className="material-icons-outlined text-lg">refresh</span>
             <span className="text-sm">Refresh</span>
+          </button>
+
+          <button
+            onClick={seedDemo}
+            className="flex h-10 items-center justify-center gap-2 rounded-lg border-2 border-ink bg-yellow-100 px-3 font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover dark:bg-yellow-900/40 dark:text-white">
+            <span className="material-icons-outlined text-lg">auto_fix_high</span>
+            <span className="text-sm">Seed Demo</span>
           </button>
 
           <button
@@ -257,7 +335,7 @@ export default function TestTab() {
         </div>
       )}
 
-      {/* Loading */}
+      {/* Loading / empty / main */}
       {isLoading ? (
         <div className="rounded-lg border-2 border-ink bg-white p-4 text-center shadow-comic dark:bg-slate-700">
           <p className="font-bold text-gray-600 dark:text-gray-300">Loading…</p>
