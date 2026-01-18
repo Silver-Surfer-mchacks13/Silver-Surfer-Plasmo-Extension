@@ -118,4 +118,38 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+
+  .login-dot-bg {
+    background-color: #f1f5f9; /* slate-100 */
+    background-image: radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px);
+    background-size: 24px 24px;
+  }
+
+  .dark .login-dot-bg {
+    background-color: #121620; /* comic-black */
+    background-image: radial-gradient(circle, #ffffff 1.5px, transparent 1.5px);
+    background-size: 24px 24px;
+    opacity: 1; /* keep it crisp */
+  }
+
+  /* Stitch utilities */
+  .text-stroke-black {
+    -webkit-text-stroke: 1.5px black;
+  }
+
+  .header-gradient {
+    background: linear-gradient(to right, #3b82f6, #06b6d4);
+  }
+
+  .auth0-gradient {
+    background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  }
+
+  .shadow-comic-deep {
+    box-shadow: 6px 6px 0px 0px #000000;
+  }
+
+  .shadow-comic-button {
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.5), 4px 4px 0px #000;
+  }
 }
