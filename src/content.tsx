@@ -10,7 +10,8 @@ import {
   scrollToView,
   clickElement,
   fillFormField,
-  selectDropdown
+  selectDropdown,
+  distillDOM
 } from "~lib/page-actions"
 
 export const config: PlasmoCSConfig = {
@@ -82,6 +83,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "SELECT_DROPDOWN") {
     const result = selectDropdown(request.selector, request.value)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "DISTILL_DOM") {
+    const result = distillDOM()
     sendResponse(result)
     return true
   }
