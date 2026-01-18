@@ -390,6 +390,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })
     return true
   }
+
+  if (request.action === "SEND_HELP_REQUEST") {
+    handleHelpRequest(request.payload)
+      .then(sendResponse)
+      .catch((err) => {
+        console.error("Help Request Error:", err)
+        sendResponse({ success: false, error: err.message })
+      })
+    return true
+  }
 })
 
 async function handleScreenshotCapture() {
@@ -762,6 +772,111 @@ async function handleApiRequest(request: any) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Network error"
+    }
+  }
+}
+
+// Gumloop Help Request Handler
+const GUMLOOP_API_URL = "https://api.gumloop.com/api/v1/start_pipeline"
+const GUMLOOP_USER_ID = "IWTnzQ7ln9P4Ui3yZZS4mdnByAw1"
+const GUMLOOP_SAVED_ITEM_ID = "s6RfDYaBSpquiSG5HzuNXr"
+const GUMLOOP_API_KEY = "3c5694c1fdfc4652b7fd96f77e405837"
+
+// Imgur anonymous upload - free, no account needed
+const IMGUR_CLIENT_ID = "546c25a59c58ad7" // Public client ID for anonymous uploads
+
+async function uploadToImgur(base64Image: string): Promise<string | null> {
+  try {
+    // Remove data URL prefix if present
+    const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, "")
+    
+    const response = await fetch("https://api.imgur.com/3/image", {
+      method: "POST",
+      headers: {
+        "Authorization": `Client-ID ${IMGUR_CLIENT_ID}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        image: base64Data,
+        type: "base64"
+      })
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+      console.log("[Imgur] Upload successful:", data.data.link)
+      return data.data.link
+    } else {
+      console.error("[Imgur] Upload failed:", await response.text())
+      return null
+    }
+  } catch (error) {
+    console.error("[Imgur] Upload error:", error)
+    return null
+  }
+}
+
+async function handleHelpRequest(payload: {
+  page_url: string
+  page_title: string
+  issue_description: string
+  screenshot_base64: string
+  timestamp: string
+}) {
+  const url = `${GUMLOOP_API_URL}?user_id=${GUMLOOP_USER_ID}&saved_item_id=${GUMLOOP_SAVED_ITEM_ID}`
+
+  // Upload screenshot to Imgur to get a URL that Discord can use
+  let screenshotUrl = ""
+  if (payload.screenshot_base64) {
+    console.log("[Help Request] Uploading screenshot to Imgur...")
+    const imgurUrl = await uploadToImgur(payload.screenshot_base64)
+    screenshotUrl = imgurUrl || "[Screenshot upload failed]"
+  } else {
+    screenshotUrl = "[No screenshot available]"
+  }
+
+  console.log("[Help Request] Sending to Gumloop:", {
+    url,
+    page_url: payload.page_url,
+    page_title: payload.page_title,
+    issue_description: payload.issue_description,
+    screenshot: screenshotUrl,
+    timestamp: payload.timestamp
+  })
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${GUMLOOP_API_KEY}`
+      },
+      body: JSON.stringify({
+        page_url: payload.page_url,
+        page_title: payload.page_title,
+        issue_description: payload.issue_description,
+        screenshot: screenshotUrl,
+        timestamp: payload.timestamp
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      return {
+        success: false,
+        error: `Gumloop API error: ${response.status} - ${errorText}`
+      }
+    }
+
+    const data = await response.json()
+    return {
+      success: true,
+      data
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to send help request"
     }
   }
 }

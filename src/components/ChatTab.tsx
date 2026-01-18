@@ -148,7 +148,7 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
         if (chrome.runtime.lastError) {
           const errorMsg = chrome.runtime.lastError.message
           if (errorMsg?.includes("Receiving end does not exist") ||
-              errorMsg?.includes("Could not establish connection")) {
+            errorMsg?.includes("Could not establish connection")) {
             // Content script not ready, fall back to executeScript
             console.log("Content script not ready for action, using executeScript fallback")
             fallbackToExecuteScript()
@@ -171,10 +171,10 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
         // Create plain JavaScript function based on action type (NO TypeScript syntax!)
         let executeFunc: any
         let args: any[] = []
-        
+
         switch (action.action_type) {
           case "click":
-            executeFunc = function(sel) {
+            executeFunc = function (sel) {
               const element = document.querySelector(sel)
               if (!element) return { success: false, message: "Element not found: " + sel }
               const el = element
@@ -197,7 +197,7 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             args = [selector]
             break
           case "highlight":
-            executeFunc = function(sel) {
+            executeFunc = function (sel) {
               const element = document.querySelector(sel)
               if (!element) return { success: false, message: "Element not found: " + sel }
               element.setAttribute("data-silver-surfer-highlight", "true")
@@ -209,8 +209,8 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             args = [selector]
             break
           case "remove_highlights":
-            executeFunc = function() {
-              document.querySelectorAll("[data-silver-surfer-highlight]").forEach(function(el) {
+            executeFunc = function () {
+              document.querySelectorAll("[data-silver-surfer-highlight]").forEach(function (el) {
                 el.removeAttribute("data-silver-surfer-highlight")
                 el.style.removeProperty("outline")
                 el.style.removeProperty("outline-offset")
@@ -220,7 +220,7 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             }
             break
           case "magnify":
-            executeFunc = function(sel, scale) {
+            executeFunc = function (sel, scale) {
               const element = document.querySelector(sel)
               if (!element) return { success: false, message: "Element not found: " + sel }
               const scaleVal = scale || 1.3
@@ -231,8 +231,8 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             args = [selector, scaleFactor]
             break
           case "reset_magnification":
-            executeFunc = function() {
-              document.querySelectorAll("[style*='font-size'], [style*='transform']").forEach(function(el) {
+            executeFunc = function () {
+              document.querySelectorAll("[style*='font-size'], [style*='transform']").forEach(function (el) {
                 el.style.removeProperty("font-size")
                 el.style.removeProperty("transform")
               })
@@ -240,7 +240,7 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             }
             break
           case "scroll":
-            executeFunc = function(sel) {
+            executeFunc = function (sel) {
               const element = document.querySelector(sel)
               if (!element) return { success: false, message: "Element not found: " + sel }
               element.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -249,7 +249,7 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             args = [selector]
             break
           case "fill_form":
-            executeFunc = function(sel, val) {
+            executeFunc = function (sel, val) {
               const element = document.querySelector(sel)
               if (!element) return { success: false, message: "Element not found: " + sel }
               if (["INPUT", "TEXTAREA"].indexOf(element.tagName) === -1) {
@@ -268,7 +268,7 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             args = [selector, value]
             break
           case "select_dropdown":
-            executeFunc = function(sel, val) {
+            executeFunc = function (sel, val) {
               const element = document.querySelector(sel)
               if (!element || element.tagName !== "SELECT") {
                 return { success: false, message: "Select element not found: " + sel }
@@ -280,10 +280,10 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             args = [selector, value]
             break
           case "remove_clutter":
-            executeFunc = function() {
+            executeFunc = function () {
               const clutterSelectors = ["aside", "nav", "footer", ".ad", ".advertisement", "[class*='ad-']"]
-              clutterSelectors.forEach(function(sel) {
-                document.querySelectorAll(sel).forEach(function(el) {
+              clutterSelectors.forEach(function (sel) {
+                document.querySelectorAll(sel).forEach(function (el) {
                   el.style.setProperty("display", "none", "important")
                 })
               })
@@ -291,8 +291,8 @@ async function executeAction(action: ConversationAction): Promise<{ success: boo
             }
             break
           case "restore_clutter":
-            executeFunc = function() {
-              document.querySelectorAll("[style*='display: none']").forEach(function(el) {
+            executeFunc = function () {
+              document.querySelectorAll("[style*='display: none']").forEach(function (el) {
                 el.style.removeProperty("display")
               })
               return { success: true, message: "Restored clutter" }
@@ -412,9 +412,52 @@ export default function ChatTab() {
   const [isHandsFree, setIsHandsFree] = useState(false)
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false)
   const [lastSpokenAssistantId, setLastSpokenAssistantId] = useState<string | null>(null)
+  const [currentPageUrl, setCurrentPageUrl] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const handsFreeStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeRecordingIdRef = useRef<string | null>(null)
+
+  // Clear conversation when page URL changes significantly
+  useEffect(() => {
+    const checkPageChange = () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const newUrl = tabs[0]?.url
+        if (newUrl && currentPageUrl) {
+          // Check if the origin/path changed (not just hash/query)
+          try {
+            const oldOrigin = new URL(currentPageUrl).origin + new URL(currentPageUrl).pathname
+            const newOrigin = new URL(newUrl).origin + new URL(newUrl).pathname
+            if (oldOrigin !== newOrigin) {
+              // Page changed, clear conversation
+              console.log("Page changed, clearing conversation", { from: currentPageUrl, to: newUrl })
+              setChatState({
+                messages: [],
+                sessionId: null,
+                isProcessing: false,
+                isComplete: false
+              })
+            }
+          } catch {
+            // URL parsing failed, ignore
+          }
+        }
+        setCurrentPageUrl(newUrl || null)
+      })
+    }
+
+    // Check initially
+    checkPageChange()
+
+    // Listen for tab updates
+    const handleTabUpdate = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (changeInfo.url) {
+        checkPageChange()
+      }
+    }
+
+    chrome.tabs.onUpdated.addListener(handleTabUpdate)
+    return () => chrome.tabs.onUpdated.removeListener(handleTabUpdate)
+  }, [currentPageUrl])
 
   const clearHandsFreeTimer = useCallback(() => {
     if (handsFreeStopTimer.current) {
@@ -444,8 +487,19 @@ export default function ChatTab() {
     }
   }, [])
 
-  // Maximum number of agent loop iterations to prevent infinite loops
-  const MAX_ITERATIONS = 10
+  // Maximum number of agent loop iterations - increased for complex tasks
+  const MAX_ITERATIONS = 20
+
+  // Helper to extract conversation history from messages for API context
+  const getConversationHistory = (messages: ChatMessage[]): Array<{ role: "user" | "assistant"; content: string }> => {
+    return messages
+      .filter(msg => msg.role === "user" || msg.role === "assistant")
+      .slice(-15) // Keep last 15 messages for context (increased for longer tasks)
+      .map(msg => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content
+      }))
+  }
 
   // Process a single API response and execute actions
   const processAgentResponse = async (
@@ -698,6 +752,9 @@ export default function ChatTab() {
       timestamp: new Date()
     }
 
+    // Get current messages before adding the new one (for history context)
+    const currentHistory = getConversationHistory(chatState.messages)
+
     setChatState((prev) => ({
       ...prev,
       messages: [...prev.messages, userMessage],
@@ -708,11 +765,13 @@ export default function ChatTab() {
     try {
       const pageData = await getCurrentPageState()
 
+      // Include conversation history for context
       const response = await sendConversationMessage(
         trimmedInput,
         chatState.sessionId,
         pageData?.pageState,
-        pageData?.title
+        pageData?.title,
+        currentHistory
       )
 
       // Process the response (may recurse for multi-step tasks)
