@@ -9,8 +9,26 @@ import ChatTab from "./components/ChatTab"
 import SimplifyTab from "./components/SimplifyTab"
 import logo from "data-base64:~assets/final_logo.svg"
 
+declare global {
+  interface Window {
+    __silverOffscreenBootstrapped?: boolean
+  }
+}
+
+const isOffscreenDocument = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("offscreen") === "1"
+
+if (isOffscreenDocument && typeof window !== "undefined" && !window.__silverOffscreenBootstrapped) {
+  window.__silverOffscreenBootstrapped = true
+  import("./offscreen-runtime")
+    .then(({ initializeOffscreenRecorder }) => initializeOffscreenRecorder())
+    .catch((error) => console.error("Failed to initialize offscreen recorder:", error))
+}
 
 export default function SidePanel() {
+  if (isOffscreenDocument) {
+    return null
+  }
+
   const [dark, setDark] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [authState, setAuthState] = useState<AuthState>({

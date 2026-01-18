@@ -1,53 +1,36 @@
-console.log("Offscreen: script loaded")
-
-let mediaRecorder = null
-let audioChunks = []
-let currentStream = null
+let mediaRecorder: MediaRecorder | null = null
+let audioChunks: Blob[] = []
+let currentStream: MediaStream | null = null
 
 const SILENCE_THRESHOLD = 0.08
 const SILENCE_DURATION_MS = 1400
 
-let audioContext = null
-let analyser = null
-let analyserData = null
-let silenceCheckId = null
-let silenceStartTime = null
+let audioContext: AudioContext | null = null
+let analyser: AnalyserNode | null = null
+let analyserData: Uint8Array | null = null
+let silenceCheckId: number | null = null
+let silenceStartTime: number | null = null
 let autoStopRequested = false
 let autoStopEnabled = true
-let currentRecordingId = null
+let currentRecordingId: string | null = null
+let initialized = false
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("Offscreen: received message", message.type)
+function log(...args: unknown[]) {
+  console.log("Offscreen:", ...args)
+}
 
-  if (message.type === "offscreen-ping") {
-    sendResponse({ ready: true })
-    return true
+function cleanupStream() {
+  mediaRecorder = null
+  audioChunks = []
+  stopSilenceDetection()
+  if (currentStream) {
+    currentStream.getTracks().forEach((track) => track.stop())
+    currentStream = null
   }
+  currentRecordingId = null
+}
 
-  if (message.type === "offscreen-start-recording") {
-    startRecording(Boolean(message.autoStop), message.recordingId)
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => {
-        console.error("Offscreen: start error", error)
-        sendResponse({ success: false, error: error.message })
-      })
-    return true
-  }
-
-  if (message.type === "offscreen-stop-recording") {
-    stopRecording()
-      .then((audioData) => sendResponse({ audioData }))
-      .catch((error) => {
-        console.error("Offscreen: stop error", error)
-        sendResponse({ success: false, error: error.message })
-      })
-    return true
-  }
-
-  return false
-})
-
-async function startRecording(autoStop = true, recordingId) {
+async function startRecording(autoStop = true, recordingId?: string) {
   if (mediaRecorder?.state === "recording") {
     console.warn("Offscreen: already recording")
     return
@@ -55,9 +38,9 @@ async function startRecording(autoStop = true, recordingId) {
 
   autoStopEnabled = autoStop
   currentRecordingId = typeof recordingId === "string" ? recordingId : null
-  console.log("Offscreen: requesting microphone")
+  log("requesting microphone")
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  console.log("Offscreen: microphone granted")
+  log("microphone granted")
 
   currentStream = stream
   audioChunks = []
@@ -76,10 +59,10 @@ async function startRecording(autoStop = true, recordingId) {
   }
 
   mediaRecorder.start()
-  console.log("Offscreen: recorder started")
+  log("recorder started")
 }
 
-async function stopRecording() {
+async function stopRecording(): Promise<string> {
   if (!mediaRecorder) {
     throw new Error("Recorder not initialized")
   }
@@ -91,14 +74,14 @@ async function stopRecording() {
   stopSilenceDetection()
 
   return new Promise((resolve, reject) => {
-    mediaRecorder.onstop = async () => {
+    mediaRecorder!.onstop = async () => {
       try {
-        console.log("Offscreen: recorder stopped, processing")
+        log("recorder stopped, processing")
         const blob = new Blob(audioChunks, { type: "audio/webm" })
         const reader = new FileReader()
         const recordingIdSnapshot = currentRecordingId
         reader.onloadend = () => {
-          const result = reader.result
+          const result = reader.result as string
           chrome.runtime.sendMessage({ type: "audio-data", audioData: result, recordingId: recordingIdSnapshot })
           resolve(result)
         }
@@ -111,22 +94,11 @@ async function stopRecording() {
       }
     }
 
-    mediaRecorder.stop()
+    mediaRecorder!.stop()
   })
 }
 
-function cleanupStream() {
-  mediaRecorder = null
-  audioChunks = []
-  stopSilenceDetection()
-  if (currentStream) {
-    currentStream.getTracks().forEach((track) => track.stop())
-    currentStream = null
-  }
-  currentRecordingId = null
-}
-
-function startSilenceDetection(stream) {
+function startSilenceDetection(stream: MediaStream) {
   stopSilenceDetection()
   try {
     audioContext = new AudioContext()
@@ -143,7 +115,7 @@ function startSilenceDetection(stream) {
 }
 
 function stopSilenceDetection() {
-  if (silenceCheckId) {
+  if (silenceCheckId !== null) {
     cancelAnimationFrame(silenceCheckId)
     silenceCheckId = null
   }
@@ -156,7 +128,7 @@ function stopSilenceDetection() {
   }
 }
 
-function checkSilence(timestamp) {
+function checkSilence(timestamp: number) {
   if (!autoStopEnabled || !analyser || !analyserData || autoStopRequested) {
     return
   }
@@ -171,13 +143,13 @@ function checkSilence(timestamp) {
   const isSilent = rms < SILENCE_THRESHOLD
 
   if (isSilent) {
-    if (!silenceStartTime) {
+    if (silenceStartTime == null) {
       silenceStartTime = timestamp || performance.now()
     }
     const elapsed = (timestamp || performance.now()) - silenceStartTime
     if (elapsed >= SILENCE_DURATION_MS) {
       autoStopRequested = true
-      console.log("Offscreen: silence detected, requesting stop", { rms, elapsed })
+      log("silence detected, requesting stop", { rms, elapsed })
       stopSilenceDetection()
       chrome.runtime.sendMessage({ type: "auto-stop-recording-request", recordingId: currentRecordingId })
       return
@@ -187,4 +159,42 @@ function checkSilence(timestamp) {
   }
 
   silenceCheckId = requestAnimationFrame(checkSilence)
+}
+
+function handleMessage(message: any, _sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) {
+  if (message.type === "offscreen-ping") {
+    sendResponse({ ready: true })
+    return true
+  }
+
+  if (message.type === "offscreen-start-recording") {
+    startRecording(Boolean(message.autoStop), message.recordingId)
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => {
+        console.error("Offscreen: start error", error)
+        sendResponse({ success: false, error: (error as Error).message })
+      })
+    return true
+  }
+
+  if (message.type === "offscreen-stop-recording") {
+    stopRecording()
+      .then((audioData) => sendResponse({ audioData }))
+      .catch((error) => {
+        console.error("Offscreen: stop error", error)
+        sendResponse({ success: false, error: (error as Error).message })
+      })
+    return true
+  }
+
+  return false
+}
+
+export function initializeOffscreenRecorder() {
+  if (initialized) {
+    return
+  }
+  initialized = true
+  log("runtime script loaded")
+  chrome.runtime.onMessage.addListener(handleMessage)
 }
