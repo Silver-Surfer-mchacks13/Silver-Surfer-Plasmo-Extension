@@ -148,17 +148,18 @@ export default function TestTab() {
     }
   ]
 
-  return (
-    <div className="comic-scroll flex-1 space-y-4 overflow-y-auto border-t-4 border-ink bg-white p-4 dark:bg-slate-800">
-      {/* Input Fields */}
-      <div className="rounded-lg border-2 border-ink bg-gray-50 p-4 shadow-comic dark:bg-slate-700">
-        <h3 className="mb-3 font-display text-lg font-bold text-ink dark:text-white">
-          Test Parameters
-        </h3>
-        
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-sm font-bold text-gray-600 dark:text-gray-300">
+return (
+  <div className="ss-dot-bg flex-1 overflow-hidden border-t-4 border-black">
+    <div className="custom-scrollbar h-full overflow-y-auto p-4 pb-10 space-y-6">
+      {/* TEST PARAMETERS */}
+      <section className="comic-panel rounded-lg bg-white p-6 dark:bg-slate-700">
+        <h2 className="font-display mb-6 text-2xl italic tracking-wide text-slate-900 dark:text-white">
+          TEST PARAMETERS
+        </h2>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="block text-lg font-bold text-slate-700 dark:text-slate-300">
               CSS Selector
             </label>
             <input
@@ -166,12 +167,15 @@ export default function TestTab() {
               value={selector}
               onChange={(e) => setSelector(e.target.value)}
               placeholder="e.g., h1, .class-name, #id"
-              className="w-full rounded-lg border-2 border-ink bg-white px-3 py-2 text-sm font-medium text-ink placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-600 dark:text-white"
+              className="w-full rounded border-2 border-black p-3 outline-none transition-all
+                         bg-white text-slate-900 placeholder:text-slate-400
+                         focus:ring-2 focus:ring-purple-500 focus:border-black
+                         dark:bg-slate-700 dark:text-slate-100 dark:placeholder:text-slate-500"
             />
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-bold text-gray-600 dark:text-gray-300">
+          <div className="space-y-2">
+            <label className="block text-lg font-bold text-slate-700 dark:text-slate-300">
               Value (for fill/select)
             </label>
             <input
@@ -179,12 +183,15 @@ export default function TestTab() {
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="e.g., John Doe, Option 1"
-              className="w-full rounded-lg border-2 border-ink bg-white px-3 py-2 text-sm font-medium text-ink placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-600 dark:text-white"
+              className="w-full rounded border-2 border-black p-3 outline-none transition-all
+                         bg-white text-slate-900 placeholder:text-slate-400
+                         focus:ring-2 focus:ring-purple-500 focus:border-black
+                         dark:bg-slate-700 dark:text-slate-100 dark:placeholder:text-slate-500"
             />
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-bold text-gray-600 dark:text-gray-300">
+          <div className="space-y-2">
+            <label className="block text-lg font-bold text-slate-700 dark:text-slate-300">
               Scale Factor (for magnify)
             </label>
             <input
@@ -194,61 +201,82 @@ export default function TestTab() {
               step="0.1"
               min="1"
               max="3"
-              className="w-full rounded-lg border-2 border-ink bg-white px-3 py-2 text-sm font-medium text-ink placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-600 dark:text-white"
+              className="w-full rounded border-2 border-black p-3 outline-none transition-all
+                         bg-white text-slate-900
+                         focus:ring-2 focus:ring-purple-500 focus:border-black
+                         dark:bg-slate-700 dark:text-slate-100"
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Action Buttons */}
-      <div className="rounded-lg border-2 border-ink bg-gray-50 p-4 shadow-comic dark:bg-slate-700">
-        <h3 className="mb-3 font-display text-lg font-bold text-ink dark:text-white">
-          Page Actions
-        </h3>
-        
-        <div className="grid grid-cols-2 gap-2">
+      {/* PAGE ACTIONS */}
+      <section className="comic-panel rounded-lg bg-white p-6 dark:bg-slate-700">
+        <h2 className="font-display mb-6 text-2xl italic tracking-wide text-slate-900 dark:text-white">
+          PAGE ACTIONS
+        </h2>
+
+        <div className="grid grid-cols-2 gap-3">
           {testActions.map((action) => (
             <button
               key={action.name}
               onClick={action.action}
-              disabled={isLoading || (action.needsSelector && !selector) || (action.needsValue && !value)}
-              className={`flex items-center gap-2 rounded-lg border-2 border-ink ${action.color} px-3 py-2 text-sm font-bold text-ink shadow-comic transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-comic-hover disabled:cursor-not-allowed disabled:opacity-50 dark:text-white`}
-            >
-              <span className="material-icons-outlined text-lg">{action.icon}</span>
-              <span className="truncate text-xs">{action.name}</span>
+              disabled={
+                isLoading ||
+                (action.needsSelector && !selector) ||
+                (action.needsValue && !value)
+              }
+              className={[
+                "h-14 w-full", // fixed height + full width
+                "flex items-center gap-2",
+                "px-4",
+                "border-2 border-black rounded",
+                "shadow-[2px_2px_0px_rgba(0,0,0,1)]",
+                "font-bold transition-all",
+                "hover:brightness-110 active:translate-y-0.5 active:shadow-none",
+                "text-slate-900 dark:text-slate-200",
+                action.color,
+                "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
+              ].join(" ")}>
+              <span className="material-icons-outlined text-lg w-5 text-center">{action.icon}</span>
+              <span className="line-clamp-2 text-sm leading-tight">{action.name}</span>
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Results Log */}
-      <div className="rounded-lg border-2 border-ink bg-gray-50 p-4 shadow-comic dark:bg-slate-700">
-        <h3 className="mb-3 font-display text-lg font-bold text-ink dark:text-white">
+      {/* RESULTS */}
+      <section className="comic-panel rounded-lg bg-white p-6 dark:bg-slate-700">
+        <h2 className="font-display mb-4 text-2xl italic uppercase tracking-wide text-slate-900 dark:text-white">
           Results
-        </h3>
-        
+        </h2>
+
         {results.length === 0 ? (
-          <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-            No results yet. Try an action above!
-          </p>
+          <div className="flex h-24 items-center justify-center rounded border-2 border-dashed border-slate-400 dark:border-slate-600">
+            <p className="font-semibold italic text-slate-600 dark:text-slate-400">
+              No results yet. Try an action above!
+            </p>
+          </div>
         ) : (
-          <div className="space-y-2 max-h-48 overflow-y-auto">
+          <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
             {results.map((result, index) => (
               <div
                 key={index}
-                className={`rounded-lg border-2 p-2 text-xs ${
-                  result.success
-                    ? "border-green-500 bg-green-50 dark:bg-green-900/30"
-                    : "border-red-500 bg-red-50 dark:bg-red-900/30"
-                }`}
-              >
+                className={[
+                  "rounded border-2 border-black p-3",
+                  result.success ? "bg-green-200/60 dark:bg-green-900/30" : "bg-red-200/60 dark:bg-red-900/30"
+                ].join(" ")}>
                 <div className="flex items-center gap-2">
-                  <span className={`material-icons-outlined text-sm ${result.success ? "text-green-600" : "text-red-600"}`}>
+                  <span
+                    className={[
+                      "material-icons-outlined text-lg",
+                      result.success ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"
+                    ].join(" ")}>
                     {result.success ? "check_circle" : "error"}
                   </span>
-                  <span className="font-bold text-ink dark:text-white">{result.action}</span>
+                  <span className="font-bold text-slate-900 dark:text-white">{result.action}</span>
                 </div>
-                <p className="mt-1 text-gray-600 dark:text-gray-300">{result.message}</p>
+                <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">{result.message}</p>
               </div>
             ))}
           </div>
@@ -257,24 +285,62 @@ export default function TestTab() {
         {results.length > 0 && (
           <button
             onClick={() => setResults([])}
-            className="mt-3 w-full rounded-lg border-2 border-ink bg-gray-200 px-3 py-2 text-sm font-bold text-ink transition-all hover:bg-gray-300 dark:bg-slate-600 dark:text-white dark:hover:bg-slate-500"
-          >
+            className="mt-4 w-full rounded border-2 border-black bg-slate-200 px-4 py-3 font-bold text-slate-900 shadow-[2px_2px_0px_rgba(0,0,0,1)] transition-all hover:brightness-110 active:translate-y-0.5 active:shadow-none dark:bg-slate-700 dark:text-slate-200">
             Clear Results
           </button>
         )}
-      </div>
+      </section>
 
-      {/* Usage Tips */}
-      <div className="rounded-lg border-2 border-ink bg-blue-50 p-4 shadow-comic dark:bg-blue-900/30">
-        <h3 className="mb-2 font-display text-lg font-bold text-blue-800 dark:text-blue-300">
-          💡 Quick Tips
-        </h3>
-        <ul className="list-inside list-disc space-y-1 text-xs text-blue-700 dark:text-blue-200">
-          <li>Use <code className="bg-blue-100 px-1 rounded dark:bg-blue-800">h1</code> to select the first heading</li>
-          <li>Use <code className="bg-blue-100 px-1 rounded dark:bg-blue-800">p</code> to select the first paragraph</li>
-          <li>Use <code className="bg-blue-100 px-1 rounded dark:bg-blue-800">.classname</code> for class selectors</li>
-          <li>Use <code className="bg-blue-100 px-1 rounded dark:bg-blue-800">#id</code> for ID selectors</li>
-          <li>Use <code className="bg-blue-100 px-1 rounded dark:bg-blue-800">input[type="text"]</code> for specific inputs</li>
+      {/* QUICK TIPS */}
+      <section className="comic-panel mb-8 rounded-lg bg-white p-6 dark:bg-slate-700">
+        <div className="mb-4 flex items-center gap-2">
+          <span className="text-2xl">💡</span>
+          <h2 className="font-display text-2xl italic uppercase tracking-wide text-blue-700 dark:text-blue-300">
+            Quick Tips
+          </h2>
+        </div>
+
+        <ul className="space-y-3 text-sm font-semibold text-slate-700 dark:text-slate-300">
+          <li className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
+            Use{" "}
+            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
+              h1
+            </span>{" "}
+            to select the first heading
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
+            Use{" "}
+            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
+              p
+            </span>{" "}
+            to select the first paragraph
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
+            Use{" "}
+            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
+              .classname
+            </span>{" "}
+            for class selectors
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
+            Use{" "}
+            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
+              #id
+            </span>{" "}
+            for ID selectors
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-600 dark:bg-purple-400" />
+            Use{" "}
+            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-mono text-white">
+              input[type="text"]
+            </span>{" "}
+            for inputs
+          </li>
         </ul>
       </div>
 
@@ -379,5 +445,7 @@ export default function TestTab() {
         </div>
       )}
     </div>
-  )
+  </div>
+)
+
 }
