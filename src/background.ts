@@ -20,8 +20,8 @@ function sendRuntimeMessage(message: any): Promise<any> {
 }
 
 // ElevenLabs endpoints
-const TTS_URL = "http://localhost:7265/api/v1/tts"
-const STT_URL = "http://localhost:7265/api/v1/stt"
+const TTS_URL = "http://localhost:3000/api/v1/tts"
+const STT_URL = "http://localhost:3000/api/v1/stt"
 
 // Storage for captured data
 let capturedData: {
