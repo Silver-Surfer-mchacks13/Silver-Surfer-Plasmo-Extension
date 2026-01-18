@@ -4,7 +4,7 @@
 import { api } from "./api"
 import type { ConversationRequest, ConversationResponse, PageState } from "~types/conversation"
 
-const CONVERSATIONS_ENDPOINT = "/api/v1/Agent/conversations"
+const CONVERSATIONS_ENDPOINT = "/api/chat"
 
 /**
  * Send a message to the conversations API
@@ -15,11 +15,12 @@ export async function sendConversationMessage(
   message: string,
   sessionId?: string | null,
   pageState?: PageState,
-  title?: string
+  pageTitle?: string
 ): Promise<{ success: boolean; data?: ConversationResponse; error?: string }> {
   const requestBody: ConversationRequest = {
-    title: title || message,
-    page_state: pageState || { url: "", html: "", screenshot: "" }
+    title: pageTitle || "Untitled Page",
+    message: message,  // The actual user message
+    page_state: pageState || { url: "", distilledDOM: null, screenshot: "" }
   }
 
   // Only include session_id if we have one (to continue existing conversation)
@@ -57,14 +58,14 @@ export async function sendConversationMessage(
 }
 
 /**
- * Get the current page state from the active tab including HTML and screenshot
+ * Get the current page state from the active tab including distilled DOM and screenshot
  */
 export async function getCurrentPageState(): Promise<{
   pageState: PageState
   title: string
 } | null> {
   return new Promise((resolve) => {
-    // Use CAPTURE_ALL to get both screenshot and HTML
+    // Use CAPTURE_ALL to get both screenshot and distilled DOM
     chrome.runtime.sendMessage({ action: "CAPTURE_ALL" }, (response) => {
       if (chrome.runtime.lastError) {
         console.error("Failed to capture page state:", chrome.runtime.lastError)
@@ -78,17 +79,17 @@ export async function getCurrentPageState(): Promise<{
         return
       }
 
-      const { screenshot, html, url } = response.data
-      
+      const { screenshot, distilledDOM, url } = response.data
+
       // Get the page title from the active tab
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs[0]
         const title = tab?.title || "Untitled"
-        
+
         resolve({
           pageState: {
             url: url || tab?.url || "",
-            html: html || "",
+            distilledDOM: distilledDOM || null,
             screenshot: screenshot || ""
           },
           title

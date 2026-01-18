@@ -15,22 +15,53 @@ export function highlightElement(selector: string): { success: boolean; message:
 
   // Create comic-style highlight
   element.setAttribute("data-silver-surfer-highlight", "true")
-  element.style.setProperty("outline", "4px solid #1e40af", "important")
-  element.style.setProperty("outline-offset", "4px", "important")
-  element.style.setProperty("box-shadow", "0 0 0 8px #fbbf24, 6px 6px 0 8px #000", "important")
+  
+  // Clean up any inline styles we might have set directly previously, relying on the injected stylesheet
+  // We set these merely as fallback, but the stylesheet is the main driver
+  element.style.setProperty("outline", "4px solid #000", "important")
+  element.style.setProperty("outline-offset", "2px", "important")
+  element.style.setProperty("box-shadow", "6px 6px 0 0 #3b82f6", "important") // Comic Blue shadow
   element.style.setProperty("position", "relative", "important")
-  element.style.setProperty("z-index", "9999", "important")
+  element.style.setProperty("z-index", "2147483647", "important")
 
-  // Add pulsing animation
+  // Add flashing/pulsing comic animation style
   const style = document.createElement("style")
   style.id = "silver-surfer-highlight-style"
   style.textContent = `
     [data-silver-surfer-highlight="true"] {
-      animation: silver-surfer-pulse 1.5s ease-in-out infinite;
+      animation: silver-surfer-jiggle 2s ease-in-out infinite;
+      outline: 4px solid #000 !important;
+      box-shadow: 6px 6px 0 0 #3b82f6 !important;
     }
-    @keyframes silver-surfer-pulse {
-      0%, 100% { outline-color: #1e40af; box-shadow: 0 0 0 8px #fbbf24, 6px 6px 0 8px #000; }
-      50% { outline-color: #3b82f6; box-shadow: 0 0 0 10px #fde047, 8px 8px 0 10px #000; }
+    
+    /* Comic Action Badge */
+    [data-silver-surfer-highlight="true"]::after {
+      content: "ACTION!";
+      position: absolute;
+      top: -30px;
+      left: -10px;
+      background: #fbbf24; /* Comic Yellow */
+      border: 3px solid #000;
+      color: #000;
+      padding: 0px 8px;
+      font-family: "Comic Sans MS", "Chalkboard SE", sans-serif;
+      font-weight: 900;
+      font-size: 14px;
+      box-shadow: 3px 3px 0px 0px #000;
+      z-index: 2147483647;
+      white-space: nowrap;
+      pointer-events: none;
+      animation: silver-surfer-float 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes silver-surfer-jiggle {
+      0%, 100% { transform: rotate(-0.5deg) scale(1.0); }
+      50% { transform: rotate(0.5deg) scale(1.01); }
+    }
+    
+    @keyframes silver-surfer-float {
+      from { transform: translateY(0); }
+      to { transform: translateY(-5px); }
     }
   `
   document.head.appendChild(style)
@@ -640,3 +671,385 @@ export function distillDOM(): { success: boolean; message: string; data?: Distil
     }
   }
 }
+
+// ============================================
+// PAGE SIMPLIFICATION - Overlay-based focused views
+// ============================================
+
+interface SimplifiedItem {
+  type: "text" | "link" | "button" | "image" | "input"
+  content: string
+  selector: string
+  href?: string
+  src?: string
+  price?: string
+}
+
+interface SimplifiedSection {
+  heading?: string
+  items: SimplifiedItem[]
+}
+
+interface SimplifiedContent {
+  title: string
+  sections: SimplifiedSection[]
+  message: string
+}
+
+/**
+ * Creates and displays an overlay with simplified page content
+ * The overlay is styled in comic-book theme and allows interaction with original page elements
+ */
+export function applySimplification(
+  content: SimplifiedContent
+): { success: boolean; message: string } {
+  try {
+    // First, remove any existing overlay
+    removeSimplification()
+
+    // Create overlay container
+    const overlay = document.createElement("div")
+    overlay.id = "silver-surfer-simplify-overlay"
+    overlay.innerHTML = `
+      <div class="ss-overlay-backdrop"></div>
+      <div class="ss-overlay-container">
+        <div class="ss-overlay-header">
+          <h1 class="ss-overlay-title">${escapeHtml(content.title)}</h1>
+          <p class="ss-overlay-message">${escapeHtml(content.message)}</p>
+          <button class="ss-overlay-close" aria-label="Close simplified view">
+            <span>✕</span> Exit Simplified View
+          </button>
+        </div>
+        <div class="ss-overlay-content">
+          ${content.sections.map(section => `
+            <div class="ss-section">
+              ${section.heading ? `<h2 class="ss-section-heading">${escapeHtml(section.heading)}</h2>` : ''}
+              <div class="ss-section-items">
+                ${section.items.map(item => renderItem(item)).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `
+
+    // Add styles
+    const style = document.createElement("style")
+    style.id = "silver-surfer-simplify-style"
+    style.textContent = `
+      #silver-surfer-simplify-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 2147483647;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      
+      .ss-overlay-backdrop {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+      }
+      
+      .ss-overlay-container {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 90%;
+        max-width: 900px;
+        max-height: 85vh;
+        background: #fff;
+        border: 4px solid #000;
+        border-radius: 16px;
+        box-shadow: 8px 8px 0 0 #3b82f6;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      
+      .ss-overlay-header {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        padding: 20px 24px;
+        border-bottom: 4px solid #000;
+        position: relative;
+      }
+      
+      .ss-overlay-title {
+        color: #fff;
+        font-size: 28px;
+        font-weight: 900;
+        margin: 0 0 8px 0;
+        text-shadow: 2px 2px 0 #000;
+        letter-spacing: 1px;
+      }
+      
+      .ss-overlay-message {
+        color: rgba(255,255,255,0.9);
+        font-size: 14px;
+        margin: 0;
+      }
+      
+      .ss-overlay-close {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        background: #fbbf24;
+        border: 3px solid #000;
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-weight: bold;
+        font-size: 14px;
+        cursor: pointer;
+        box-shadow: 3px 3px 0 0 #000;
+        transition: all 0.15s ease;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      
+      .ss-overlay-close:hover {
+        transform: translate(2px, 2px);
+        box-shadow: 1px 1px 0 0 #000;
+      }
+      
+      .ss-overlay-content {
+        padding: 24px;
+        overflow-y: auto;
+        flex: 1;
+        background: #f8fafc;
+      }
+      
+      .ss-section {
+        margin-bottom: 24px;
+      }
+      
+      .ss-section-heading {
+        font-size: 20px;
+        font-weight: 800;
+        color: #1e293b;
+        margin: 0 0 16px 0;
+        padding-bottom: 8px;
+        border-bottom: 3px solid #3b82f6;
+        display: inline-block;
+      }
+      
+      .ss-section-items {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+      }
+      
+      .ss-item {
+        background: #fff;
+        border: 3px solid #000;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 4px 4px 0 0 #e2e8f0;
+        transition: all 0.15s ease;
+        cursor: pointer;
+      }
+      
+      .ss-item:hover {
+        transform: translate(2px, 2px);
+        box-shadow: 2px 2px 0 0 #e2e8f0;
+        background: #f0f9ff;
+      }
+      
+      .ss-item-text {
+        font-size: 16px;
+        line-height: 1.5;
+        color: #334155;
+      }
+      
+      .ss-item-link {
+        color: #2563eb;
+        text-decoration: none;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .ss-item-link::before {
+        content: "→";
+        font-weight: bold;
+      }
+      
+      .ss-item-button {
+        background: #10b981;
+        color: #fff;
+        border: 3px solid #000;
+        padding: 12px 20px;
+        font-size: 16px;
+        font-weight: bold;
+        border-radius: 8px;
+        cursor: pointer;
+        box-shadow: 3px 3px 0 0 #000;
+        transition: all 0.15s ease;
+        width: 100%;
+        text-align: center;
+      }
+      
+      .ss-item-button:hover {
+        transform: translate(2px, 2px);
+        box-shadow: 1px 1px 0 0 #000;
+      }
+      
+      .ss-item-image {
+        width: 100%;
+        height: 150px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 2px solid #e2e8f0;
+        margin-bottom: 12px;
+      }
+      
+      .ss-item-price {
+        font-size: 22px;
+        font-weight: 900;
+        color: #059669;
+        margin-top: 8px;
+      }
+      
+      .ss-item-content {
+        font-size: 15px;
+        color: #475569;
+        margin-top: 4px;
+      }
+
+      /* Scrollbar styling */
+      .ss-overlay-content::-webkit-scrollbar {
+        width: 12px;
+      }
+      
+      .ss-overlay-content::-webkit-scrollbar-track {
+        background: #e2e8f0;
+        border-radius: 6px;
+      }
+      
+      .ss-overlay-content::-webkit-scrollbar-thumb {
+        background: #94a3b8;
+        border-radius: 6px;
+        border: 2px solid #e2e8f0;
+      }
+    `
+    document.head.appendChild(style)
+    document.body.appendChild(overlay)
+
+    // Add close button handler
+    const closeBtn = overlay.querySelector(".ss-overlay-close")
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => removeSimplification())
+    }
+
+    // Add click handlers for items to interact with original page
+    overlay.querySelectorAll("[data-ss-selector]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        const selector = (e.currentTarget as HTMLElement).getAttribute("data-ss-selector")
+        if (selector) {
+          const originalEl = document.querySelector(selector) as HTMLElement
+          if (originalEl) {
+            // For links, navigate
+            if (originalEl.tagName === "A") {
+              window.location.href = (originalEl as HTMLAnchorElement).href
+            } else {
+              // For buttons/other, click and close overlay
+              originalEl.click()
+              removeSimplification()
+            }
+          }
+        }
+      })
+    })
+
+    // Add escape key handler
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        removeSimplification()
+        document.removeEventListener("keydown", escHandler)
+      }
+    }
+    document.addEventListener("keydown", escHandler)
+
+    return {
+      success: true,
+      message: `Simplified view created with ${content.sections.length} sections`
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to apply simplification"
+    }
+  }
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement("div")
+  div.textContent = text
+  return div.innerHTML
+}
+
+function renderItem(item: SimplifiedItem): string {
+  const selectorAttr = `data-ss-selector="${escapeHtml(item.selector)}"`
+  
+  switch (item.type) {
+    case "image":
+      return `
+        <div class="ss-item" ${selectorAttr}>
+          ${item.src ? `<img class="ss-item-image" src="${escapeHtml(item.src)}" alt="${escapeHtml(item.content)}" />` : ''}
+          <div class="ss-item-content">${escapeHtml(item.content)}</div>
+          ${item.price ? `<div class="ss-item-price">${escapeHtml(item.price)}</div>` : ''}
+        </div>
+      `
+    case "link":
+      return `
+        <div class="ss-item" ${selectorAttr}>
+          <a class="ss-item-link" href="${escapeHtml(item.href || '#')}">${escapeHtml(item.content)}</a>
+        </div>
+      `
+    case "button":
+      return `
+        <button class="ss-item ss-item-button" ${selectorAttr}>${escapeHtml(item.content)}</button>
+      `
+    case "text":
+    default:
+      return `
+        <div class="ss-item">
+          <p class="ss-item-text">${escapeHtml(item.content)}</p>
+        </div>
+      `
+  }
+}
+
+/**
+ * Removes the simplification overlay and restores normal view
+ */
+export function removeSimplification(): { success: boolean; message: string } {
+  try {
+    // Remove overlay
+    const overlay = document.getElementById("silver-surfer-simplify-overlay")
+    if (overlay) overlay.remove()
+
+    // Remove style
+    const style = document.getElementById("silver-surfer-simplify-style")
+    if (style) style.remove()
+
+    return {
+      success: true,
+      message: "Simplified view closed"
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to remove simplification"
+    }
+  }
+}
+

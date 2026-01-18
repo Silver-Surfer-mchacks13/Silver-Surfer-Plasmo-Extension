@@ -11,7 +11,9 @@ import {
   clickElement,
   fillFormField,
   selectDropdown,
-  distillDOM
+  distillDOM,
+  applySimplification,
+  removeSimplification
 } from "~lib/page-actions"
 
 export const config: PlasmoCSConfig = {
@@ -89,6 +91,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "DISTILL_DOM") {
     const result = distillDOM()
+    sendResponse(result)
+    return true
+  }
+
+  // Page Simplification handlers
+  if (request.action === "APPLY_SIMPLIFICATION") {
+    // New overlay-based simplification expects content object with title, sections, message
+    const result = applySimplification(request.content)
+    sendResponse(result)
+    return true
+  }
+
+  if (request.action === "REMOVE_SIMPLIFICATION") {
+    const result = removeSimplification()
     sendResponse(result)
     return true
   }
