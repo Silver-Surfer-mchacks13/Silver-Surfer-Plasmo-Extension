@@ -5,6 +5,7 @@ import type { AuthState, AuthUser } from "~lib/auth-service"
 import "./style.css"
 import SettingsTab from "./components/settings_tab"
 import TestTab from "./components/TestTab"
+import ChatTab from "./components/ChatTab"
 import logo from "data-base64:~assets/final_logo.svg"
 
 
@@ -211,106 +212,8 @@ export default function SidePanel() {
         ) : tab === "test" ? (
           <TestTab />
         ) : (
-          <div className="comic-scroll bg-dots flex-1 space-y-8 overflow-y-auto border-t-4 border-ink bg-white bg-halftone-light p-4 dark:bg-slate-800 dark:bg-halftone-dark">
-            {/* Assistant message */}
-            <div className="flex w-full justify-start">
-              <div className="relative max-w-[90%]">
-                <div className="absolute -left-2 top-6 z-10 h-5 w-5 rotate-45 border-l-2 border-b-2 border-ink bg-white dark:bg-slate-700" />
-                <div className="relative z-20 rounded-xl border-2 border-ink bg-white p-5 text-ink shadow-comic dark:bg-slate-700 dark:text-white">
-                  <p className="font-body text-xl font-bold leading-snug">
-                    Greetings, Traveler! I am your{" "}
-                    <span className="text-blue-600 dark:text-blue-400">
-                      Silver Assistant
-                    </span>
-                    . How can I help you navigate the cosmos of the internet today?
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* User message */}
-            <div className="flex w-full justify-end">
-              <div className="relative max-w-[90%]">
-                <div className="absolute -right-2 top-6 z-10 h-5 w-5 -rotate-45 border-r-2 border-b-2 border-ink bg-blue-100 dark:bg-blue-900" />
-                <div className="relative z-20 rounded-xl border-2 border-ink bg-blue-100 p-5 text-ink shadow-comic dark:bg-blue-900 dark:text-white">
-                  <p className="font-body text-xl font-bold leading-snug">
-                    Can you make the text on this news site larger for me?
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Assistant action bubble */}
-            <div className="flex w-full justify-start">
-              <div className="relative max-w-[95%]">
-                <div className="absolute -left-2 top-6 z-10 h-5 w-5 rotate-45 border-l-2 border-b-2 border-ink bg-white dark:bg-slate-700" />
-                <div className="relative z-20 rounded-xl border-2 border-ink bg-white p-5 text-ink shadow-comic dark:bg-slate-700 dark:text-white">
-                  <p className="mb-4 font-body text-xl font-bold leading-snug">
-                    Certainly! I have increased the text size by{" "}
-                    <span className="inline-block -rotate-1 border border-black bg-yellow-300 px-1 text-black dark:bg-yellow-600">
-                      20%
-                    </span>
-                    .
-                  </p>
-                  <div className="flex flex-wrap gap-3">
-                    <button className="flex-1 min-w-[120px] rounded-lg border-2 border-ink bg-green-100 py-3 px-4 text-lg font-bold text-ink shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-comic-hover dark:bg-green-900 dark:text-white dark:hover:bg-green-800">
-                      <span className="material-icons-outlined text-3xl">
-                        add_circle
-                      </span>
-                      Larger
-                    </button>
-                    <button className="flex-1 min-w-[120px] rounded-lg border-2 border-ink bg-red-100 py-3 px-4 text-lg font-bold text-ink shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-comic-hover dark:bg-red-900 dark:text-white dark:hover:bg-red-800">
-                      <span className="material-icons-outlined text-3xl">
-                        restart_alt
-                      </span>
-                      Reset
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick actions */}
-            <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <button className="transform rounded-full border-2 border-ink bg-yellow-100 py-2 px-4 text-base font-bold text-ink shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:rotate-1 hover:shadow-comic-hover dark:bg-slate-700 dark:text-white">
-                Read this page to me
-              </button>
-              <button className="transform rounded-full border-2 border-ink bg-cyan-100 py-2 px-4 text-base font-bold text-ink shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:-rotate-1 hover:shadow-comic-hover dark:bg-slate-700 dark:text-white">
-                Find recipe
-              </button>
-            </div>
-
-            <div className="h-6" />
-          </div>
+          <ChatTab />
         )}
-
-        {/* Footer input (only for chat) */}
-        {tab === "chat" ? (
-          <div className="relative z-20 shrink-0 border-t-4 border-ink bg-gray-100 p-4 dark:bg-slate-900">
-            <div className="flex items-end gap-3">
-              <div className="flex h-16 flex-1 items-center rounded-xl border-2 border-ink bg-white shadow-comic transition-all focus-within:translate-x-[2px] focus-within:translate-y-[2px] focus-within:shadow-comic-hover dark:bg-slate-800">
-                <input
-                  className="h-full w-full border-none bg-transparent p-4 text-xl font-bold text-ink placeholder-gray-400 focus:ring-0 dark:text-white"
-                  placeholder="Type here..."
-                  type="text"
-                />
-              </div>
-              <button
-                aria-label="Speak"
-                className="group flex h-16 w-16 items-center justify-center rounded-xl border-2 border-ink bg-comic-red text-white shadow-comic transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:bg-red-600 hover:shadow-comic-hover">
-                <span className="material-icons-outlined text-4xl transition-transform group-hover:scale-110">
-                  mic
-                </span>
-              </button>
-            </div>
-
-            <div className="mt-3 text-center">
-              <p className="font-display text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                Powered by Silver Surfer AI
-              </p>
-            </div>
-          </div>
-        ) : null}
       </div>
     </div>
   )
