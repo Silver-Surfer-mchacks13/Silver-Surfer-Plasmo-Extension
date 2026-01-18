@@ -126,5 +126,7 @@ export const getStyle = (): HTMLStyleElement => {
   return styleElement
 }
 
-// Overlay component removed - no longer needed
-// export default PlasmoOverlay
+// Provide a stub component so Plasmo's CSUI pipeline has a valid default export
+const EmptyOverlay = () => null
+
+export default EmptyOverlay
