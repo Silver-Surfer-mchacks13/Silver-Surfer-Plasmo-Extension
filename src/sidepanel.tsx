@@ -7,6 +7,7 @@ import SettingsTab from "./components/settings_tab"
 import TestTab from "./components/TestTab"
 import ChatTab from "./components/ChatTab"
 import SimplifyTab from "./components/SimplifyTab"
+import HelpRequestButton from "./components/HelpRequestButton"
 import logo from "data-base64:~assets/final_logo.svg"
 
 
@@ -234,6 +235,9 @@ export default function SidePanel() {
         ) : (
           <ChatTab />
         )}
+
+        {/* Help Request Button - Always visible */}
+        <HelpRequestButton />
       </div>
     </div>
   )

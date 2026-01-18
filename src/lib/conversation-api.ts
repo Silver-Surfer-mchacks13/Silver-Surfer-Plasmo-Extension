@@ -15,7 +15,8 @@ export async function sendConversationMessage(
   message: string,
   sessionId?: string | null,
   pageState?: PageState,
-  pageTitle?: string
+  pageTitle?: string,
+  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<{ success: boolean; data?: ConversationResponse; error?: string }> {
   const requestBody: ConversationRequest = {
     title: pageTitle || "Untitled Page",
@@ -26,6 +27,11 @@ export async function sendConversationMessage(
   // Only include session_id if we have one (to continue existing conversation)
   if (sessionId) {
     requestBody.session_id = sessionId
+  }
+
+  // Include conversation history for context
+  if (conversationHistory && conversationHistory.length > 0) {
+    requestBody.conversation_history = conversationHistory
   }
 
   const response = await api.post<ConversationResponse>(CONVERSATIONS_ENDPOINT, requestBody)

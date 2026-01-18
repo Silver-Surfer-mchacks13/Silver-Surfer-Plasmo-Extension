@@ -220,8 +220,51 @@ export default function ChatTab() {
   const [isHandsFree, setIsHandsFree] = useState(false)
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false)
   const [lastSpokenAssistantId, setLastSpokenAssistantId] = useState<string | null>(null)
+  const [currentPageUrl, setCurrentPageUrl] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const handsFreeStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear conversation when page URL changes significantly
+  useEffect(() => {
+    const checkPageChange = () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const newUrl = tabs[0]?.url
+        if (newUrl && currentPageUrl) {
+          // Check if the origin/path changed (not just hash/query)
+          try {
+            const oldOrigin = new URL(currentPageUrl).origin + new URL(currentPageUrl).pathname
+            const newOrigin = new URL(newUrl).origin + new URL(newUrl).pathname
+            if (oldOrigin !== newOrigin) {
+              // Page changed, clear conversation
+              console.log("Page changed, clearing conversation", { from: currentPageUrl, to: newUrl })
+              setChatState({
+                messages: [],
+                sessionId: null,
+                isProcessing: false,
+                isComplete: false
+              })
+            }
+          } catch {
+            // URL parsing failed, ignore
+          }
+        }
+        setCurrentPageUrl(newUrl || null)
+      })
+    }
+
+    // Check initially
+    checkPageChange()
+
+    // Listen for tab updates
+    const handleTabUpdate = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (changeInfo.url) {
+        checkPageChange()
+      }
+    }
+    
+    chrome.tabs.onUpdated.addListener(handleTabUpdate)
+    return () => chrome.tabs.onUpdated.removeListener(handleTabUpdate)
+  }, [currentPageUrl])
 
   const clearHandsFreeTimer = useCallback(() => {
     if (handsFreeStopTimer.current) {
@@ -251,8 +294,19 @@ export default function ChatTab() {
     }
   }, [])
 
-  // Maximum number of agent loop iterations to prevent infinite loops
-  const MAX_ITERATIONS = 10
+  // Maximum number of agent loop iterations - increased for complex tasks
+  const MAX_ITERATIONS = 20
+
+  // Helper to extract conversation history from messages for API context
+  const getConversationHistory = (messages: ChatMessage[]): Array<{ role: "user" | "assistant"; content: string }> => {
+    return messages
+      .filter(msg => msg.role === "user" || msg.role === "assistant")
+      .slice(-15) // Keep last 15 messages for context (increased for longer tasks)
+      .map(msg => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content
+      }))
+  }
 
   // Process a single API response and execute actions
   const processAgentResponse = async (
@@ -329,32 +383,53 @@ export default function ChatTab() {
       await executeActions(executableActions)
     }
 
-    // If the agent wants to observe the page after actions and we haven't hit max iterations
-    if (needs_observation && !complete && iteration < MAX_ITERATIONS) {
-      // Wait for page to update after actions
-      await new Promise((r) => setTimeout(r, 1000))
+    // Determine if we should continue the agent loop
+    // Continue if:
+    // 1. Agent explicitly wants observation, OR
+    // 2. We executed page actions and task isn't complete, OR
+    // 3. Agent only sent a message (no page actions) but task isn't complete - nudge it to act
+    const hasExecutableActions = executableActions.length > 0
+    const onlySentMessage = !hasExecutableActions && actions.length > 0 // Agent only used send_message
+    const shouldNudgeAgent = onlySentMessage && !complete && iteration < 3 // Nudge up to 3 times
+    
+    const shouldContinue = (needs_observation || hasExecutableActions || shouldNudgeAgent) && !complete && iteration < MAX_ITERATIONS
 
-      // Capture new page state
+    if (shouldContinue) {
+      // Wait for page to update after actions (shorter wait if just nudging)
+      await new Promise((r) => setTimeout(r, hasExecutableActions ? 1200 : 500))
+
+      // Capture new page state - this is a FRESH capture
       const newPageData = await getCurrentPageState()
 
       if (newPageData) {
-        // Add a thinking indicator
-        setChatState((prev) => ({
-          ...prev,
-          messages: [...prev.messages, {
-            id: generateId(),
-            role: "assistant",
-            content: "Observing the page...",
-            timestamp: new Date()
-          }]
-        }))
+        // Add a thinking indicator only if we're doing meaningful work
+        if (hasExecutableActions) {
+          setChatState((prev) => ({
+            ...prev,
+            messages: [...prev.messages, {
+              id: generateId(),
+              role: "assistant",
+              content: "Verifying the action worked...",
+              timestamp: new Date()
+            }]
+          }))
+        }
 
-        // Send observation to agent (use special message format)
+        // Send observation to agent with fresh screenshot
+        // Note: Get fresh history since state may have updated
+        const historyForObservation = getConversationHistory(chatState.messages)
+        
+        // Craft the observation message - nudge if agent only sent a message without acting
+        const observationMessage = shouldNudgeAgent
+          ? `[NUDGE] You explained what you would do but didn't take action. Please IMMEDIATELY perform the action now. Original task: ${originalMessage}`
+          : `[OBSERVATION] Verifying action and continuing task: ${originalMessage}`
+        
         const observationResponse = await sendConversationMessage(
-          `[OBSERVATION] Continuing task: ${originalMessage}`,
+          observationMessage,
           session_id,
           newPageData.pageState,
-          newPageData.title
+          newPageData.title,
+          historyForObservation
         )
 
         // Recursively process the next response
@@ -449,6 +524,9 @@ export default function ChatTab() {
       timestamp: new Date()
     }
 
+    // Get current messages before adding the new one (for history context)
+    const currentHistory = getConversationHistory(chatState.messages)
+
     setChatState((prev) => ({
       ...prev,
       messages: [...prev.messages, userMessage],
@@ -459,11 +537,13 @@ export default function ChatTab() {
     try {
       const pageData = await getCurrentPageState()
 
+      // Include conversation history for context
       const response = await sendConversationMessage(
         trimmedInput,
         chatState.sessionId,
         pageData?.pageState,
-        pageData?.title
+        pageData?.title,
+        currentHistory
       )
 
       // Process the response (may recurse for multi-step tasks)
