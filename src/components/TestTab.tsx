@@ -342,7 +342,7 @@ return (
             for inputs
           </li>
         </ul>
-      </div>
+      </section>
 
       {/* DOM Distiller Section */}
       <div className="rounded-lg border-2 border-ink bg-purple-50 p-4 shadow-comic dark:bg-purple-900/30">
