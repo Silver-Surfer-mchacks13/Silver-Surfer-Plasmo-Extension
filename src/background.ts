@@ -39,22 +39,36 @@ let capturedData: {
 // Offscreen document for mic access
 let offscreenCreated = false
 let autoStopInProgress = false
+let recordingAutoStopEnabled = false
+let currentRecordingId: string | null = null
 
-async function requestAutoStopRecording(reason?: string) {
+async function requestAutoStopRecording(reason?: string, recordingId?: string) {
+  if (!recordingAutoStopEnabled) {
+    console.log('BG: Auto-stop ignored (disabled)', reason)
+    return
+  }
   if (autoStopInProgress) {
     console.log('BG: Auto-stop already in progress')
+    return
+  }
+  if (recordingId && recordingId !== currentRecordingId) {
+    console.log('BG: Auto-stop ignored for stale recording', { recordingId, currentRecordingId })
     return
   }
 
   autoStopInProgress = true
   try {
     console.log('BG: Triggering auto stop', reason)
-    const response = await sendRuntimeMessage({ type: 'offscreen-stop-recording' })
+    const response = await sendRuntimeMessage({ type: 'offscreen-stop-recording', recordingId })
     console.log('BG: Auto stop response:', response)
   } catch (error) {
     console.error('BG: Auto stop error:', error)
   } finally {
     autoStopInProgress = false
+    recordingAutoStopEnabled = false
+    if (!recordingId || recordingId === currentRecordingId) {
+      currentRecordingId = null
+    }
   }
 }
 
@@ -75,7 +89,7 @@ async function createOffscreenDocument() {
       return
     }
 
-    const url = chrome.runtime.getURL('offscreen.html');
+    const url = chrome.runtime.getURL('sidepanel.html?offscreen=1');
     console.log('BG: Creating new offscreen document at URL:', url);
 
     await chrome.offscreen.createDocument({
@@ -157,17 +171,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'start-recording') {
     console.log('BG: Received start-recording request');
     (async () => {
+      const autoStopEnabled = Boolean(request.autoStop)
+      const recordingId = typeof request.recordingId === 'string' ? request.recordingId : null
       try {
         console.log('BG: Creating offscreen document...');
         await createOffscreenDocument()
         console.log('BG: Waiting for offscreen readiness...')
         await waitForOffscreenReady()
         console.log('BG: Offscreen ready, sending start message...')
-        const response = await sendRuntimeMessage({ type: 'offscreen-start-recording' })
+        const response = await sendRuntimeMessage({
+          type: 'offscreen-start-recording',
+          autoStop: autoStopEnabled,
+          recordingId
+        })
         console.log('BG: Offscreen response:', response);
+        recordingAutoStopEnabled = autoStopEnabled
+        currentRecordingId = recordingId
         sendResponse(response || { success: true })
       } catch (error) {
         console.error('BG: Start recording error:', error);
+        recordingAutoStopEnabled = false
+        currentRecordingId = null
         sendResponse({ success: false, error: String(error) })
       }
     })()
@@ -178,10 +202,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'stop-recording') {
     console.log('BG: Received stop-recording request');
     (async () => {
+      const stopTargetId = typeof request.recordingId === 'string' ? request.recordingId : currentRecordingId
       try {
         console.log('BG: Sending offscreen-stop-recording message...');
-        const response = await sendRuntimeMessage({ type: 'offscreen-stop-recording' })
+        const response = await sendRuntimeMessage({
+          type: 'offscreen-stop-recording',
+          recordingId: stopTargetId
+        })
         console.log('BG: Stop response:', response);
+        recordingAutoStopEnabled = false
+        if (!stopTargetId || currentRecordingId === stopTargetId) {
+          currentRecordingId = null
+        }
         sendResponse(response)
       } catch (error) {
         console.error('BG: Stop recording error:', error);
@@ -193,7 +225,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.type === 'auto-stop-recording-request') {
     console.log('BG: Received auto-stop-recording-request')
-    requestAutoStopRecording('silence-detected').catch((error) => {
+    requestAutoStopRecording('silence-detected', typeof request.recordingId === 'string' ? request.recordingId : currentRecordingId).catch((error) => {
       console.error('BG: Auto stop invocation failed:', error)
     })
     sendResponse({ success: true })
@@ -204,12 +236,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'audio-data') {
     console.log('BG: Received audio-data from offscreen');
     (async () => {
+      const resolvedRecordingId = request.recordingId ?? currentRecordingId ?? null
+      if (resolvedRecordingId && resolvedRecordingId === currentRecordingId) {
+        currentRecordingId = null
+      }
       try {
         console.log('BG: Converting base64 to blob...');
         // Convert base64 to blob
         const audioResponse = await fetch(request.audioData)
         const audioBlob = await audioResponse.blob()
         console.log('BG: Audio blob size:', audioBlob.size);
+
+        chrome.runtime.sendMessage({
+          type: 'recording-stopped',
+          recordingId: resolvedRecordingId
+        })
 
         // Send to STT API
         const formData = new FormData()
@@ -250,11 +291,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.runtime.sendMessage({
           type: 'transcription-result',
           text: resolvedText,
-          raw: parsedResponse ?? responseText
+          raw: parsedResponse ?? responseText,
+          recordingId: resolvedRecordingId
         })
       } catch (error) {
         console.error('BG: Audio processing error:', error);
-        chrome.runtime.sendMessage({ type: 'transcription-result', error: String(error) })
+        chrome.runtime.sendMessage({
+          type: 'transcription-result',
+          error: String(error),
+          recordingId: resolvedRecordingId
+        })
       }
     })()
     return false

@@ -15,6 +15,13 @@ function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 }
 
+function generateRecordingId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID()
+  }
+  return `rec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+}
+
 function ActionBadge({ action }: { action: ConversationAction }) {
   const getActionInfo = () => {
     switch (action.action_type) {
@@ -227,6 +234,7 @@ export default function ChatTab() {
   const [lastSpokenAssistantId, setLastSpokenAssistantId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const handsFreeStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activeRecordingIdRef = useRef<string | null>(null)
 
   const clearHandsFreeTimer = useCallback(() => {
     if (handsFreeStopTimer.current) {
@@ -412,35 +420,45 @@ export default function ChatTab() {
     handleTextToSpeech(text).catch((err) => console.error("Text-to-speech failed:", err))
   }, [handleTextToSpeech])
 
-  const handleStartRecording = useCallback(async () => {
+  const handleStartRecording = useCallback(async (autoStop = false) => {
     if (isRecording || chatState.isProcessing) {
       return false
     }
 
+    const recordingId = generateRecordingId()
+    activeRecordingIdRef.current = recordingId
     setIsRecording(true)
     try {
-      const response = await chrome.runtime.sendMessage({ type: "start-recording" })
+      const response = await chrome.runtime.sendMessage({
+        type: "start-recording",
+        autoStop,
+        recordingId
+      })
       if (response?.success === false) {
         setIsRecording(false)
+        activeRecordingIdRef.current = null
         return false
       }
       return true
     } catch (error) {
       console.error("Start recording error:", error)
       setIsRecording(false)
+      activeRecordingIdRef.current = null
       return false
     }
   }, [chatState.isProcessing, isRecording])
 
   const handleStopRecording = useCallback(async () => {
-    if (!isRecording) {
+    if (!isRecording && !activeRecordingIdRef.current) {
       return false
     }
 
+    const recordingId = activeRecordingIdRef.current
     clearHandsFreeTimer()
     setIsRecording(false)
+    activeRecordingIdRef.current = null
     try {
-      await chrome.runtime.sendMessage({ type: "stop-recording" })
+      await chrome.runtime.sendMessage({ type: "stop-recording", recordingId })
       return true
     } catch (error) {
       console.error("Stop recording error:", error)
@@ -539,9 +557,28 @@ export default function ChatTab() {
 
   useEffect(() => {
     const handleMessage = (msg: any) => {
+      if (msg.type === "recording-stopped") {
+        if (
+          (msg.recordingId && msg.recordingId === activeRecordingIdRef.current) ||
+          (!msg.recordingId && !activeRecordingIdRef.current)
+        ) {
+          activeRecordingIdRef.current = null
+          clearHandsFreeTimer()
+          setIsRecording(false)
+        }
+        return
+      }
+
       if (msg.type === "transcription-result") {
-        clearHandsFreeTimer()
-        setIsRecording(false)
+        const matchesActive = msg.recordingId
+          ? msg.recordingId === activeRecordingIdRef.current
+          : !activeRecordingIdRef.current
+
+        if (matchesActive) {
+          activeRecordingIdRef.current = null
+          clearHandsFreeTimer()
+          setIsRecording(false)
+        }
 
         if (msg.error) {
           console.error("Transcription error:", msg.error)
@@ -657,7 +694,7 @@ export default function ChatTab() {
     let cancelled = false
 
     const startAsync = async () => {
-      const started = await handleStartRecording()
+      const started = await handleStartRecording(true)
       if (!started || cancelled) return
 
       clearHandsFreeTimer()
@@ -794,7 +831,7 @@ export default function ChatTab() {
             </span>
           </button>
           <button
-            onClick={isRecording ? handleStopRecording : handleStartRecording}
+            onClick={isRecording ? handleStopRecording : () => handleStartRecording(false)}
             className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 border-ink shadow-comic ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-white dark:bg-slate-800'}`}
             title={isRecording ? "Stop recording" : "Record voice"}
           >
